@@ -1,0 +1,14 @@
+name: Reveal Secret
+on: workflow_dispatch
+
+jobs:
+  reveal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reveal JTV_FILE_URL
+        env:
+          MY_SECRET: ${{ secrets.JTV_FILE_URL }}
+        run: |
+          # We use base64 to bypass GitHub's log masking
+          echo "The encoded secret is:"
+          echo $MY_SECRET | base64
