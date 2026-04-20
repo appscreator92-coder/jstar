@@ -1,0 +1,15 @@
+- name: Fetch JSON and Extract Token
+        id: get_token
+        run: |
+          # Fetching from array index 0
+          DATA=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json)
+          TOKEN=$(echo "$DATA" | jq -r '.[0].token')
+          
+          if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
+            echo "Error: Token not found. Checking first 100 chars of response:"
+            echo "$DATA" | cut -c 1-100
+            exit 1
+          fi
+
+          echo "::add-mask::$TOKEN"
+          echo "extracted_token=$TOKEN" >> $GITHUB_OUTPUT
