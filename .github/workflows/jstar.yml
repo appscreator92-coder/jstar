@@ -1,42 +1,15 @@
-name: Extract Token from JSON
-
-on:
-  schedule:
-    # Runs every 6 hours (optional - adjust as needed)
-    - cron: '0 */6 * * *'
-  workflow_dispatch: 
-    # Allows you to run this manually from the Actions tab
-
-jobs:
-  fetch-and-parse:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Fetch JSON and Extract Token
+- name: Fetch JSON and Extract Token
         id: get_token
         run: |
-          # 1. Download the JSON file
-          # 2. Use jq to extract the field (change '.token' to the actual key name)
-          # 3. Use -r to get the 'raw' string without quotes
-          TOKEN=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json | jq -r '.token')
+          # Fetching from array index 0
+          DATA=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json)
+          TOKEN=$(echo "$DATA" | jq -r '.[0].token')
           
-          # Check if token was found
           if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
-            echo "Error: Token not found in JSON"
+            echo "Error: Token not found. Checking first 100 chars of response:"
+            echo "$DATA" | cut -c 1-100
             exit 1
           fi
 
-          # Mask the token so it doesn't show up in the logs
           echo "::add-mask::$TOKEN"
-          
-          # Save it to an output variable for use in other steps
           echo "extracted_token=$TOKEN" >> $GITHUB_OUTPUT
-
-      - name: Use the Token
-        run: |
-          echo "The token has been extracted and masked."
-          # You can now use the token via the step output:
-          # echo "Token is: ${{ steps.get_token.outputs.extracted_token }}"
