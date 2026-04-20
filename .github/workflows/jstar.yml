@@ -1,15 +1,36 @@
-- name: Fetch JSON and Extract Token
-        id: get_token
+name: Extract Cookie Token
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */4 * * *' # Runs every 4 hours
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch and Parse Cookie
+        id: fetch_step
         run: |
-          # Fetching from array index 0
-          DATA=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json)
-          TOKEN=$(echo "$DATA" | jq -r '.[0].token')
+          # Fetch the JSON and extract the value of the 'cookie' key
+          RAW_DATA=$(curl -s -L -H "User-Agent: Mozilla/5.0" https://allinonereborn.online/jstrweb2/jstr.json)
           
-          if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
-            echo "Error: Token not found. Checking first 100 chars of response:"
-            echo "$DATA" | cut -c 1-100
+          # Extracting from the 'cookie' field
+          COOKIE_VAL=$(echo "$RAW_DATA" | jq -r '.cookie')
+
+          if [ "$COOKIE_VAL" == "null" ] || [ -z "$COOKIE_VAL" ]; then
+            echo "::error::Key 'cookie' not found in JSON output."
             exit 1
           fi
 
-          echo "::add-mask::$TOKEN"
-          echo "extracted_token=$TOKEN" >> $GITHUB_OUTPUT
+          # Mask the cookie value so it doesn't leak in GitHub logs
+          echo "::add-mask::$COOKIE_VAL"
+          
+          # Set as output for other steps
+          echo "cookie_token=$COOKIE_VAL" >> $GITHUB_OUTPUT
+          echo "Successfully extracted cookie token."
+
+      - name: Use Extracted Cookie
+        run: |
+          # Use the variable in your next process (e.g., updating an M3U file)
+          echo "The cookie is ready: ${{ steps.fetch_step.outputs.cookie_token }}"
