@@ -1,34 +1,26 @@
-import requests
-
 def extract_token(url):
     try:
-        # Send a GET request to the URL
         response = requests.get(url)
-        
-        # Check if the request was successful
         response.raise_for_status()
-        
-        # Parse the JSON response
         data = response.json()
         
-        # Extract the token (adjust the key 'token' if the JSON structure is different)
-        # For example, if it's nested: data['data']['token']
-        token = data.get('token')
+        # Check if the data is a list
+        if isinstance(data, list) and len(data) > 0:
+            # Grab the first item in the list, then get the token
+            token = data[0].get('token') 
+        elif isinstance(data, dict):
+            # If it's a dictionary, get it directly
+            token = data.get('token')
+        else:
+            token = None
         
         if token:
             print(f"Token extracted successfully: {token}")
             return token
         else:
-            print("Token key not found in the JSON response.")
-            print("Full JSON content:", data) # Debugging: see the actual structure
+            print("Token key not found.")
             return None
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"An error occurred: {e}")
         return None
-
-# The URL provided
-target_url = "https://allinonereborn.online/jstrweb2/jstr.json"
-
-# Execute the function
-extract_token(target_url)
