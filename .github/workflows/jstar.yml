@@ -2,35 +2,32 @@ name: Extract Cookie Token
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */4 * * *' # Runs every 4 hours
 
 jobs:
   extract:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch and Parse Cookie
+      - name: Fetch and Debug JSON
         id: fetch_step
         run: |
-          # Fetch the JSON and extract the value of the 'cookie' key
-          RAW_DATA=$(curl -s -L -H "User-Agent: Mozilla/5.0" https://allinonereborn.online/jstrweb2/jstr.json)
+          # Use -L to follow redirects and -H to mimic a browser
+          RAW_DATA=$(curl -s -L -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" https://allinonereborn.online/jstrweb2/jstr.json)
           
-          # Extracting from the 'cookie' field
-          COOKIE_VAL=$(echo "$RAW_DATA" | jq -r '.cookie')
-
-          if [ "$COOKIE_VAL" == "null" ] || [ -z "$COOKIE_VAL" ]; then
-            echo "::error::Key 'cookie' not found in JSON output."
+          # Check if the data is actually JSON
+          if ! echo "$RAW_DATA" | jq empty > /dev/null 2>&1; then
+            echo "::error::The URL did not return valid JSON. It might be blocked or returning an HTML error page."
+            echo "First 100 characters of response:"
+            echo "$RAW_DATA" | head -c 100
             exit 1
           fi
 
-          # Mask the cookie value so it doesn't leak in GitHub logs
-          echo "::add-mask::$COOKIE_VAL"
-          
-          # Set as output for other steps
-          echo "cookie_token=$COOKIE_VAL" >> $GITHUB_OUTPUT
-          echo "Successfully extracted cookie token."
+          # Extract the cookie
+          COOKIE_VAL=$(echo "$RAW_DATA" | jq -r '.cookie')
 
-      - name: Use Extracted Cookie
-        run: |
-          # Use the variable in your next process (e.g., updating an M3U file)
-          echo "The cookie is ready: ${{ steps.fetch_step.outputs.cookie_token }}"
+          if [ "$COOKIE_VAL" == "null" ]; then
+             echo "::error::Key 'cookie' not found."
+             exit 1
+          fi
+
+          echo "::add-mask::$COOKIE_VAL"
+          echo "cookie_token=$COOKIE_VAL" >> $GITHUB_OUTPUT
