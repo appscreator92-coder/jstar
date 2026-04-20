@@ -1,32 +1,31 @@
-name: Extract HDNEA Value
+name: Extract HDNEA Token
 
 on:
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *' # Optional: Runs every hour
+    - cron: '0 * * * *'
 
 jobs:
-  extract_data:
+  extract:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch JSON and Extract __hdnea__
+      - name: Extract Value
+        id: get_token
         run: |
-          # 1. Fetch the JSON data
-          # 2. Use jq to find the object where "name" is "__hdnea__"
-          # 3. Extract the "value" field from that object
-          HDNEA_VALUE=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json | jq -r '.[] | select(.name == "__hdnea__") | .value')
+          # Fetch JSON and filter by the "token" field
+          RAW_DATA=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json)
           
-          # Check if value was found
-          if [ -z "$HDNEA_VALUE" ]; then
-            echo "Error: __hdnea__ not found in the JSON response."
+          # This jq filter finds the object where token is __hdnea__ 
+          # and pulls the 'value' field. Adjust '.value' if the field has a different name.
+          VALUE=$(echo $RAW_DATA | jq -r '.[] | select(.token == "__hdnea__") | .value')
+
+          if [ "$VALUE" == "null" ] || [ -z "$VALUE" ]; then
+            echo "Error: Could not find value for token __hdnea__"
             exit 1
           fi
-          
-          echo "Extracted Value: $HDNEA_VALUE"
-          
-          # Save to Environment Variable for subsequent steps
-          echo "HDNEA_TOKEN=$HDNEA_VALUE" >> $GITHUB_ENV
 
-      - name: Use the extracted value
-        run: |
-          echo "The token extracted in the previous step is: ${{ env.HDNEA_TOKEN }}"
+          echo "HDNEA_VALUE=$VALUE" >> $GITHUB_ENV
+          echo "Successfully extracted token."
+
+      - name: Debug Output
+        run: echo "The extracted token is ${{ env.HDNEA_VALUE }}"
