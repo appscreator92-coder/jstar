@@ -1,31 +1,30 @@
-name: Extract HDNEA Token
+name: Extract Token Workflow
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "main" ]
   schedule:
-    - cron: '0 * * * *'
+    # This runs the script every 6 hours (UTC)
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allows you to run it manually from the Actions tab
 
 jobs:
-  extract:
+  run-script:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Extract Value
-        id: get_token
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
         run: |
-          # Fetch JSON and filter by the "token" field
-          RAW_DATA=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json)
-          
-          # This jq filter finds the object where token is __hdnea__ 
-          # and pulls the 'value' field. Adjust '.value' if the field has a different name.
-          VALUE=$(echo $RAW_DATA | jq -r '.[] | select(.token == "__hdnea__") | .value')
+          python -m pip install --upgrade pip
+          pip install requests
 
-          if [ "$VALUE" == "null" ] || [ -z "$VALUE" ]; then
-            echo "Error: Could not find value for token __hdnea__"
-            exit 1
-          fi
-
-          echo "HDNEA_VALUE=$VALUE" >> $GITHUB_ENV
-          echo "Successfully extracted token."
-
-      - name: Debug Output
-        run: echo "The extracted token is ${{ env.HDNEA_VALUE }}"
+      - name: Run extraction script
+        run: python j.py # Replace with your actual filename
