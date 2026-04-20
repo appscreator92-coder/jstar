@@ -1,33 +1,32 @@
-name: Extract Cookie Token
+name: Extract HDNEA Value
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual triggering
+  schedule:
+    - cron: '0 * * * *' # Optional: Runs every hour
 
 jobs:
-  extract:
+  extract_data:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch and Debug JSON
-        id: fetch_step
+      - name: Fetch JSON and Extract __hdnea__
         run: |
-          # Use -L to follow redirects and -H to mimic a browser
-          RAW_DATA=$(curl -s -L -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" https://allinonereborn.online/jstrweb2/jstr.json)
+          # 1. Fetch the JSON data
+          # 2. Use jq to find the object where "name" is "__hdnea__"
+          # 3. Extract the "value" field from that object
+          HDNEA_VALUE=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json | jq -r '.[] | select(.name == "__hdnea__") | .value')
           
-          # Check if the data is actually JSON
-          if ! echo "$RAW_DATA" | jq empty > /dev/null 2>&1; then
-            echo "::error::The URL did not return valid JSON. It might be blocked or returning an HTML error page."
-            echo "First 100 characters of response:"
-            echo "$RAW_DATA" | head -c 100
+          # Check if value was found
+          if [ -z "$HDNEA_VALUE" ]; then
+            echo "Error: __hdnea__ not found in the JSON response."
             exit 1
           fi
+          
+          echo "Extracted Value: $HDNEA_VALUE"
+          
+          # Save to Environment Variable for subsequent steps
+          echo "HDNEA_TOKEN=$HDNEA_VALUE" >> $GITHUB_ENV
 
-          # Extract the cookie
-          COOKIE_VAL=$(echo "$RAW_DATA" | jq -r '.cookie')
-
-          if [ "$COOKIE_VAL" == "null" ]; then
-             echo "::error::Key 'cookie' not found."
-             exit 1
-          fi
-
-          echo "::add-mask::$COOKIE_VAL"
-          echo "cookie_token=$COOKIE_VAL" >> $GITHUB_OUTPUT
+      - name: Use the extracted value
+        run: |
+          echo "The token extracted in the previous step is: ${{ env.HDNEA_TOKEN }}"
