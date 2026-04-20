@@ -1,66 +1,42 @@
-name: Update Jio Tokens in kid.json
+name: Extract Token from JSON
 
 on:
   schedule:
-    - cron: '0 */11 * * *'  # Runs every 11 hours
-  workflow_dispatch:        # Allows manual run from the Actions tab
+    # Runs every 6 hours (optional - adjust as needed)
+    - cron: '0 */6 * * *'
+  workflow_dispatch: 
+    # Allows you to run this manually from the Actions tab
 
 jobs:
-  update-json-tokens:
+  fetch-and-parse:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Fetch and Extract JioTV Token
-      id: fetch_jio
-      run: |
-        # Fetch the JSON source with a User-Agent to avoid blocks
-        curl -sL -H "User-Agent: Mozilla/5.0" "https://allinonereborn.online/jstrweb2/jstr.json" -o jstr.json
-        
-        # 1. Search every string value in the JSON for the token
-        # 2. Extract only the __hdnea__ part
-        # 3. Stop at common delimiters like quotes, pipes, or spaces
-        JIO_TOKEN=$(jq -r '.. | strings? | select(contains("__hdnea__="))' jstr.json | grep -o '__hdnea__=[^"&| ]*' | head -n1)
-        
-        if [ -z "$JIO_TOKEN" ]; then
-          echo "Error: Jio token could not be extracted. Current jstr.json content:"
-          cat jstr.json | head -n 50
-          exit 1
-        fi
-        
-        echo "Successfully extracted token: $JIO_TOKEN"
-        echo "JIO_TOKEN=$JIO_TOKEN" >> $GITHUB_ENV
+      - name: Fetch JSON and Extract Token
+        id: get_token
+        run: |
+          # 1. Download the JSON file
+          # 2. Use jq to extract the field (change '.token' to the actual key name)
+          # 3. Use -r to get the 'raw' string without quotes
+          TOKEN=$(curl -s https://allinonereborn.online/jstrweb2/jstr.json | jq -r '.token')
+          
+          # Check if token was found
+          if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
+            echo "Error: Token not found in JSON"
+            exit 1
+          fi
 
-    - name: Update kid.json
-      run: |
-        # Map through the channels and update those matching the Jio CDN
-        # Also sets the 'cookie' field to the exact format you requested
-        jq --arg jio "$JIO_TOKEN" '
-          .channels |= map(
-            if (.stream_url | test("jiotvmblive.cdn.jio.com")) then
-              .cookie = $jio |
-              .stream_url = (.stream_url | sub("\\?.*$"; "") + "?" + $jio)
-            else
-              .
-            end
-          )
-        ' kid.json > temp.json && mv temp.json kid.json
+          # Mask the token so it doesn't show up in the logs
+          echo "::add-mask::$TOKEN"
+          
+          # Save it to an output variable for use in other steps
+          echo "extracted_token=$TOKEN" >> $GITHUB_OUTPUT
 
-    - name: Commit and push changes
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-        git add kid.json
-        
-        # Only commit if the file actually changed
-        if git commit -m "Auto-update Jio token from jstr.json"; then
-          git pull --rebase --autostash origin main
-          git push
-        else
-          echo "No changes detected in kid.json"
-        fi
+      - name: Use the Token
+        run: |
+          echo "The token has been extracted and masked."
+          # You can now use the token via the step output:
+          # echo "Token is: ${{ steps.get_token.outputs.extracted_token }}"
