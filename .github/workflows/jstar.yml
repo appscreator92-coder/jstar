@@ -2,8 +2,8 @@ name: Update Jio Tokens in kid.json
 
 on:
   schedule:
-    - cron: '0 */11 * * *'
-  workflow_dispatch:
+    - cron: '0 */11 * * *'  # Runs every 11 hours
+  workflow_dispatch:        # Allows manual run from the Actions tab
 
 jobs:
   update-json-tokens:
@@ -15,25 +15,30 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v4
 
-    - name: Fetch JioTV token
+    - name: Fetch and Extract JioTV Token
       id: fetch_jio
       run: |
-        # Fetch the new JSON source
-        curl -sL "https://allinonereborn.online/jstrweb2/jstr.json" -o jstr.json
+        # Fetch the JSON source with a User-Agent to avoid blocks
+        curl -sL -H "User-Agent: Mozilla/5.0" "https://allinonereborn.online/jstrweb2/jstr.json" -o jstr.json
         
-        # Extract the __hdnea__ token from the first stream_url found in the JSON
-        # This looks for the string starting with __hdnea__ and ending before a quote or pipe
-        JIO_TOKEN=$(jq -r '.. | .stream_url? // empty' jstr.json | grep -o '__hdnea__=[^"]*' | head -n1)
+        # 1. Search every string value in the JSON for the token
+        # 2. Extract only the __hdnea__ part
+        # 3. Stop at common delimiters like quotes, pipes, or spaces
+        JIO_TOKEN=$(jq -r '.. | strings? | select(contains("__hdnea__="))' jstr.json | grep -o '__hdnea__=[^"&| ]*' | head -n1)
         
         if [ -z "$JIO_TOKEN" ]; then
-          echo "Error: Jio token could not be extracted from JSON."
+          echo "Error: Jio token could not be extracted. Current jstr.json content:"
+          cat jstr.json | head -n 50
           exit 1
         fi
         
+        echo "Successfully extracted token: $JIO_TOKEN"
         echo "JIO_TOKEN=$JIO_TOKEN" >> $GITHUB_ENV
 
     - name: Update kid.json
       run: |
+        # Map through the channels and update those matching the Jio CDN
+        # Also sets the 'cookie' field to the exact format you requested
         jq --arg jio "$JIO_TOKEN" '
           .channels |= map(
             if (.stream_url | test("jiotvmblive.cdn.jio.com")) then
@@ -51,9 +56,11 @@ jobs:
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
         git add kid.json
+        
+        # Only commit if the file actually changed
         if git commit -m "Auto-update Jio token from jstr.json"; then
           git pull --rebase --autostash origin main
           git push
         else
-          echo "No changes to commit"
+          echo "No changes detected in kid.json"
         fi
