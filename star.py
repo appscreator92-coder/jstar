@@ -4,58 +4,43 @@ import json
 from datetime import datetime
 
 # Configuration
-# Using the direct RAW content URL is the most reliable method
 M3U_URL = "https://raw.githubusercontent.com/rkdyiptv/Playlist/refs/heads/main/Playlist/Cricket.m3u/index.html"
 OUTPUT_FILE = "star.json"
 
-def generate_star_report():
-    print(f"Scanning source for channel data...", flush=True)
+def generate_full_url_report():
+    print(f"Fetching data with full tokens...", flush=True)
     
     try:
-        # Standard headers to prevent being blocked by GitHub
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(M3U_URL, headers=headers, timeout=20)
+        response = requests.get(M3U_URL, timeout=20)
         response.raise_for_status()
         content = response.text
     except Exception as e:
-        print(f"Connection failed: {e}")
+        print(f"Error: {e}")
         return
 
-    # STEP 1: Find all streaming URLs in the text
-    # This finds the link and stops before any '|' or ' ' 
-    url_pattern = re.compile(r'(https?://jiotvpllive\.cdn\.jio\.com/[^\s"|]+)')
-    urls = url_pattern.findall(content)
-
-    # STEP 2: Find all Names/IDs
-    # This looks for #EXTINF lines specifically
-    inf_pattern = re.compile(r'#EXTINF:.*?tvg-id="(\d+)".*?,(.*)')
-    inf_matches = inf_pattern.findall(content)
+    # Updated Regex:
+    # 1. Captures ID from tvg-id
+    # 2. Captures Name after the comma
+    # 3. Captures the ENTIRE URL including the token
+    pattern = re.compile(r'#EXTINF:.*?tvg-id="(\d+)".*?,(.*?)\n(https?://[^\s]+)')
+    matches = pattern.findall(content)
 
     failed_results = []
     
-    # We loop through the URLs found and pair them with names
-    # If the counts don't match, it falls back to index-based naming
-    for i in range(len(urls)):
-        # Try to get the ID and Name from the #EXTINF matches
-        if i < len(inf_matches):
-            channel_id = inf_matches[i][0]
-            channel_name = inf_matches[i][1].strip()
-        else:
-            channel_id = str(100 + i)
-            channel_name = f"Unknown Channel {i+1}"
-
+    for match in matches:
+        channel_id, channel_name, full_url = match
+        
         failed_results.append({
             "channel_id": channel_id,
-            "channel_name": channel_name,
+            "channel_name": channel_name.strip(),
             "status": "failed",
             "error_details": {
                 "http_code": 450,
                 "error": "",
-                "final_url": urls[i]
+                "final_url": full_url.strip() # This now includes the ?__hdnea__ token
             }
         })
 
-    # Final Object
     output_data = {
         "total_channels": len(failed_results),
         "successful_channels": 0,
@@ -65,11 +50,10 @@ def generate_star_report():
         "failed_results": failed_results
     }
 
-    # Save and Print
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=4)
 
-    print(f"SUCCESS: Extracted {len(failed_results)} channels into {OUTPUT_FILE}")
+    print(f"Done! {len(failed_results)} channels saved with full tokens.")
 
 if __name__ == "__main__":
-    generate_star_report()
+    generate_full_url_report()
