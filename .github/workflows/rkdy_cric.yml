@@ -28,7 +28,7 @@ jobs:
         env:
           RKDY_CRIC: ${{ secrets.RKDY_CRIC }}
         # Tera script path Playlist folder ke andar hai
-        run: python Playlist/rkdy_cric.py
+        run: python rkdy_cric.py
 
       - name: Commit and Push Changes
         run: |
