@@ -3,56 +3,59 @@ import re
 import json
 from datetime import datetime
 
-# Configuration - Using the RAW link to ensure we get text, not HTML
+# Configuration
+# Using the direct RAW content URL is the most reliable method
 M3U_URL = "https://raw.githubusercontent.com/rkdyiptv/Playlist/refs/heads/main/Playlist/Cricket.m3u/index.html"
 OUTPUT_FILE = "star.json"
 
-def generate_exact_result():
-    print("Connecting to source...")
+def generate_star_report():
+    print(f"Scanning source for channel data...", flush=True)
+    
     try:
-        response = requests.get(M3U_URL, timeout=15)
+        # Standard headers to prevent being blocked by GitHub
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(M3U_URL, headers=headers, timeout=20)
         response.raise_for_status()
         content = response.text
     except Exception as e:
-        print(f"Failed to fetch: {e}")
+        print(f"Connection failed: {e}")
         return
 
-    # This regex is broader: 
-    # 1. Finds #EXTINF
-    # 2. Finds the last comma and captures the name
-    # 3. Finds the URL on the next line
-    # 4. Searches for tvg-id separately to avoid missing lines without IDs
-    failed_results = []
-    lines = content.splitlines()
-    
-    for i in range(len(lines)):
-        if lines[i].startswith("#EXTINF"):
-            # Extract Name (Everything after the last comma)
-            name = lines[i].split(",")[-1].strip()
-            
-            # Extract ID (Look for tvg-id="...")
-            id_match = re.search(r'tvg-id="(\d+)"', lines[i])
-            channel_id = id_match.group(1) if id_match else "0"
-            
-            # Extract URL (Usually the very next line)
-            if i + 1 < len(lines):
-                url_line = lines[i+1].strip()
-                # Clean URL (Remove any |cookie= metadata)
-                final_url = url_line.split("|")[0]
-                
-                if final_url.startswith("http"):
-                    failed_results.append({
-                        "channel_id": channel_id,
-                        "channel_name": name,
-                        "status": "failed",
-                        "error_details": {
-                            "http_code": 450,
-                            "error": "",
-                            "final_url": final_url
-                        }
-                    })
+    # STEP 1: Find all streaming URLs in the text
+    # This finds the link and stops before any '|' or ' ' 
+    url_pattern = re.compile(r'(https?://jiotvpllive\.cdn\.jio\.com/[^\s"|]+)')
+    urls = url_pattern.findall(content)
 
-    # Construct the final JSON object
+    # STEP 2: Find all Names/IDs
+    # This looks for #EXTINF lines specifically
+    inf_pattern = re.compile(r'#EXTINF:.*?tvg-id="(\d+)".*?,(.*)')
+    inf_matches = inf_pattern.findall(content)
+
+    failed_results = []
+    
+    # We loop through the URLs found and pair them with names
+    # If the counts don't match, it falls back to index-based naming
+    for i in range(len(urls)):
+        # Try to get the ID and Name from the #EXTINF matches
+        if i < len(inf_matches):
+            channel_id = inf_matches[i][0]
+            channel_name = inf_matches[i][1].strip()
+        else:
+            channel_id = str(100 + i)
+            channel_name = f"Unknown Channel {i+1}"
+
+        failed_results.append({
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "status": "failed",
+            "error_details": {
+                "http_code": 450,
+                "error": "",
+                "final_url": urls[i]
+            }
+        })
+
+    # Final Object
     output_data = {
         "total_channels": len(failed_results),
         "successful_channels": 0,
@@ -62,10 +65,11 @@ def generate_exact_result():
         "failed_results": failed_results
     }
 
+    # Save and Print
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=4)
 
-    print(f"Success! {len(failed_results)} channels processed into {OUTPUT_FILE}")
+    print(f"SUCCESS: Extracted {len(failed_results)} channels into {OUTPUT_FILE}")
 
 if __name__ == "__main__":
-    generate_exact_result()
+    generate_star_report()
