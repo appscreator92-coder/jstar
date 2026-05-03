@@ -1,43 +1,32 @@
-name: Update Channels (Auto Sync MPD & Keys)
+name: Daily Channel Scan
 
 on:
   schedule:
-    - cron: '0 */1 * * *' # Checks every 1 hours
-  workflow_dispatch: # Allow manual trigger
-
-permissions:
-  contents: write
+    - cron: '0 0 * * *' # Runs at 00:00 UTC daily
+  workflow_dispatch:      # Allows manual trigger
 
 jobs:
-  update:
+  scan:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.12'
+          python-version: '3.9'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: pip install requests
 
-      - name: Generate channel HTML files
+      - name: Run Scanner Script
         run: python star.py
 
-      - name: Check for changes
-        id: changes
+      - name: Commit and Push changes
         run: |
-          git diff --quiet && git diff --cached --quiet && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
-
-      - name: Commit and push if changed
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
-          git commit -m "🔄 Auto-update channels: MPD & keys synced ($TIMESTAMP)"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add star.json
+          git commit -m "Update star.json: $(date)" || echo "No changes to commit"
           git push
