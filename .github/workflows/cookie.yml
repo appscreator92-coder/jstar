@@ -25,7 +25,7 @@ jobs:
         run: pip install requests
 
       - name: Generate channel HTML files and fetch keys
-        run: python generate_channels.py
+        run: python cookie.py
 
       - name: Check for changes
         id: changes
