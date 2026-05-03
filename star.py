@@ -7,41 +7,46 @@ from datetime import datetime
 M3U_URL = "https://raw.githubusercontent.com/rkdyiptv/Playlist/refs/heads/main/Playlist/Cricket.m3u/index.html"
 OUTPUT_FILE = "star.json"
 
-def generate_channel_report():
-    print(f"Connecting to source...")
+def generate_report():
+    print(f"Fetching M3U source data...")
     
     try:
-        # Fetching raw content
-        response = requests.get(M3U_URL, timeout=15)
+        response = requests.get(M3U_URL, timeout=20)
         response.raise_for_status()
         content = response.text
     except Exception as e:
-        print(f"Error: Could not retrieve M3U file. {e}")
+        print(f"Network Error: {e}")
         return
 
-    # Regex to capture: tvg-id, channel name, and the URL
-    # This handles the specific format found in IPTV playlists
-    pattern = re.compile(r'#EXTINF:.*tvg-id="([^"]*)".*?,(.*?)\n(https?://[^\s|]+)', re.MULTILINE)
+    # Flexible Regex: 
+    # 1. Finds #EXTINF
+    # 2. Optionally captures tvg-id if it exists
+    # 3. Captures everything after the last comma as the Channel Name
+    # 4. Captures the URL on the next line
+    pattern = re.compile(r'#EXTINF:.*?(?:tvg-id="([^"]*)")?.*?,(.*?)\n(https?://[^\s|]+)')
     matches = pattern.findall(content)
 
-    successful_results = []
-    failed_results = []
+    success_list = []
+    fail_list = []
     
-    print(f"Processing {len(matches)} channels...")
+    print(f"Found {len(matches)} channels. Validating links...")
 
-    for channel_id, name, url in matches:
-        channel_name = name.strip()
+    for match in matches:
+        raw_id, raw_name, url = match
         
-        try:
-            # We use a HEAD request to check the stream status without downloading data
-            # Added a common User-Agent to mimic a real player
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            res = requests.head(url, headers=headers, timeout=5, allow_redirects=True)
-            status_code = res.status_code
-        except Exception:
-            status_code = 450  # Fallback error code for connection failures
+        # Clean up data
+        channel_id = raw_id if raw_id else "N/A"
+        channel_name = raw_name.strip()
 
-        result_item = {
+        try:
+            # Check the URL status
+            # We use a 5-second timeout to keep the script moving
+            check = requests.head(url, timeout=5, allow_redirects=True)
+            status_code = check.status_code
+        except:
+            status_code = 450 # Default fail code for JioTV/Network issues
+
+        result = {
             "channel_id": channel_id,
             "channel_name": channel_name,
             "status": "success" if 200 <= status_code < 300 else "failed",
@@ -52,26 +57,25 @@ def generate_channel_report():
             }
         }
 
-        if result_item["status"] == "success":
-            successful_results.append(result_item)
+        if result["status"] == "success":
+            success_list.append(result)
         else:
-            failed_results.append(result_item)
+            fail_list.append(result)
 
-    # Compile the final dictionary
-    output_data = {
+    # Final JSON Structure
+    output = {
         "total_channels": len(matches),
-        "successful_channels": len(successful_results),
-        "failed_channels": len(failed_results),
+        "successful_channels": len(success_list),
+        "failed_channels": len(fail_list),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "successful_results": successful_results,
-        "failed_results": failed_results
+        "successful_results": success_list,
+        "failed_results": fail_list
     }
 
-    # Write to JSON
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=4)
+        json.dump(output, f, indent=4)
 
-    print(f"Report generated: {OUTPUT_FILE}")
+    print(f"Success! Created {OUTPUT_FILE} with {len(matches)} entries.")
 
 if __name__ == "__main__":
-    generate_channel_report()
+    generate_report()
