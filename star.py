@@ -4,95 +4,79 @@ import json
 from datetime import datetime
 
 # Configuration
-M3U_URL = "https://raw.githubusercontent.com/rkdyiptv/Playlist/refs/heads/main/Playlist/Cricket.m3u/index.html"
+M3U_URL = "https://raw.githubusercontent.com/rkdyiptv/Playlist/refs/heads/main/Playlist/Cricket.m3u"
 OUTPUT_FILE = "star.json"
 
-def parse_m3u(content):
-    channels = []
-    # Regular expression to find channel name, id, and the following URL
-    # Matches #EXTINF followed by tvg-id and the channel name, then the URL on the next line
-    pattern = re.compile(r'#EXTINF:.*tvg-id="([^"]*)".*,(.*)\n(https?://[^\s|]+)', re.MULTILINE)
+def generate_detailed_report():
+    print(f"Fetching and parsing M3U data...")
     
-    matches = pattern.findall(content)
-    for match in matches:
-        channels.append({
-            "channel_id": match[0],
-            "channel_name": match[1].strip(),
-            "url": match[2]
-        })
-    return channels
-
-def validate_channels(channels):
-    successful_results = []
-    failed_results = []
-
-    for ch in channels:
-        print(f"Checking: {ch['channel_name']}...", end="\r")
-        try:
-            # We use a HEAD request to check availability quickly without downloading the stream
-            response = requests.head(ch['url'], timeout=5)
-            status_code = response.status_code
-            
-            # Logic: Consider 200-299 as success, everything else as failed
-            result_item = {
-                "channel_id": ch['channel_id'],
-                "channel_name": ch['channel_name'],
-                "status": "success" if 200 <= status_code < 300 else "failed",
-                "error_details": {
-                    "http_code": status_code,
-                    "error": "" if 200 <= status_code < 300 else "Access Denied or Not Found",
-                    "final_url": ch['url']
-                }
-            }
-
-            if result_item["status"] == "success":
-                successful_results.append(result_item)
-            else:
-                failed_results.append(result_item)
-
-        except Exception as e:
-            failed_results.append({
-                "channel_id": ch['channel_id'],
-                "channel_name": ch['channel_name'],
-                "status": "failed",
-                "error_details": {
-                    "http_code": 0,
-                    "error": str(e),
-                    "final_url": ch['url']
-                }
-            })
-
-    return successful_results, failed_results
-
-def generate_detailed_json():
-    print(f"Fetching M3U from source...")
     try:
-        response = requests.get(M3U_URL, timeout=30)
+        # Note: Ensure we are hitting the RAW file, not the github.com HTML view
+        raw_url = M3U_URL.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+        response = requests.get(raw_url, timeout=30)
         response.raise_for_status()
-        m3u_content = response.text
+        content = response.text
     except Exception as e:
-        print(f"Failed to fetch M3U: {e}")
+        print(f"Error fetching M3U: {e}")
         return
 
-    channels = parse_m3u(m3u_content)
-    total_count = len(channels)
-    
-    print(f"Found {total_count} channels. Validating status...")
-    success_list, fail_list = validate_channels(channels)
+    # Improved Regex: Captures channel name and the URL even if tvg-id is missing
+    # Looks for #EXTINF, skips to the comma, grabs the name, then finds the URL on the next line
+    pattern = re.compile(r'#EXTINF:.*?,(.*)\n(https?://[^\s|]+)', re.MULTILINE)
+    matches = pattern.findall(content)
 
-    output = {
-        "total_channels": total_count,
-        "successful_channels": len(success_list),
-        "failed_channels": len(fail_list),
+    successful_results = []
+    failed_results = []
+    
+    print(f"Found {len(matches)} potential channels. Starting validation...")
+
+    for i, (name, url) in enumerate(matches):
+        channel_name = name.strip()
+        # Extract a numeric ID if present, otherwise use index
+        channel_id_match = re.search(r'tvg-id="(\d+)"', content.split(name)[0].split('\n')[-1])
+        channel_id = channel_id_match.group(1) if channel_id_match else str(400 + i)
+
+        print(f"[{i+1}/{len(matches)}] Testing: {channel_name}")
+
+        try:
+            # We perform a quick check. 
+            # Many JioTV links return 450/403 without specific headers.
+            res = requests.head(url, timeout=5, allow_redirects=True)
+            status_code = res.status_code
+        except Exception:
+            status_code = 450 # Default fail code for connection issues
+
+        result_item = {
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "status": "success" if 200 <= status_code < 300 else "failed",
+            "error_details": {
+                "http_code": status_code,
+                "error": "" if 200 <= status_code < 300 else "Access Denied",
+                "final_url": url
+            }
+        }
+
+        if result_item["status"] == "success":
+            successful_results.append(result_item)
+        else:
+            failed_results.append(result_item)
+
+    # Final Object Construction
+    output_data = {
+        "total_channels": len(matches),
+        "successful_channels": len(successful_results),
+        "failed_channels": len(failed_results),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "successful_results": success_list,
-        "failed_results": fail_list
+        "successful_results": successful_results,
+        "failed_results": failed_results
     }
 
+    # Save to file
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=4)
-    
-    print(f"\nProcessing complete. Results saved to {OUTPUT_FILE}")
+        json.dump(output_data, f, indent=4)
+
+    print(f"\nDone! Generated {OUTPUT_FILE} with {len(matches)} entries.")
 
 if __name__ == "__main__":
-    generate_detailed_json()
+    generate_detailed_report()
