@@ -328,13 +328,13 @@ def generate():
             
             # Specific mappings for tricky names
             if ch_name == "Star_Sports_Select_HD_1_BTS":
-                logo_path = "logos/Star_Sports_Select_1.png"
+                logo_path = "https://raw.githubusercontent.com/appscreator92-coder/jstar/refs/heads/main/logos/Star_Sports_Select_1.png"
             
             if not logo_path:
-                if os.path.exists(f"logos/{base_name}.png"):
-                    logo_path = f"logos/{base_name}.png"
-                elif os.path.exists(f"logos/{ch_name}.png"):
-                    logo_path = f"logos/{ch_name}.png"
+                if os.path.exists(f"https://raw.githubusercontent.com/appscreator92-coder/jstar/refs/heads/main/logos/{base_name}.png"):
+                    logo_path = f"https://raw.githubusercontent.com/appscreator92-coder/jstar/refs/heads/main/logos/{base_name}.png"
+                elif os.path.exists(f"https://raw.githubusercontent.com/appscreator92-coder/jstar/refs/heads/main/logos/{ch_name}.png"):
+                    logo_path = f"https://raw.githubusercontent.com/appscreator92-coder/jstar/refs/heads/main/logos/{ch_name}.png"
             
             channels.append({
                 "name": ch_name, 
