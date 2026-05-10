@@ -17,7 +17,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{CHANNEL_TITLE} ({TVG_ID})</title>
+<title>{CHANNEL_TITLE}</title>
+<link rel="icon" type="image/png" href="{LOGO_URL}">
 <meta name="referrer" content="no-referrer">
 <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.16.2/dist/shaka-player.ui.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/shaka-player@4.16.2/dist/controls.css"/>
@@ -30,7 +31,7 @@ video{width:100%;height:100%;object-fit:contain}
 </head>
 <body>
 <div class="shaka-video-container" id="player-container">
-<video id="video" autoplay muted playsinline></video>
+<video id="video" autoplay muted playsinline poster="{LOGO_URL}"></video>
 </div>
 <script>
 (async () => {
@@ -70,6 +71,7 @@ def generate():
     channels = []
     
     current_tvg_id = ""
+    current_logo = ""
     current_key_id = ""
     current_key = ""
     
@@ -77,10 +79,13 @@ def generate():
         line = line.strip()
         if not line: continue
         
-        # 1. Extract tvg-id from #EXTINF line
+        # 1. Parse #EXTINF for tvg-id and tvg-logo
         if line.startswith("#EXTINF"):
-            tvg_match = re.search(r'tvg-id="([^"]+)"', line)
-            current_tvg_id = tvg_match.group(1) if tvg_match else "N/A"
+            id_match = re.search(r'tvg-id="([^"]*)"', line)
+            logo_match = re.search(r'tvg-logo="([^"]*)"', line)
+            
+            current_tvg_id = id_match.group(1) if id_match else ""
+            current_logo = logo_match.group(1) if logo_match else ""
         
         # 2. Extract DRM Keys
         elif 'adaptive.license_key=' in line:
@@ -90,19 +95,20 @@ def generate():
                 if len(keys) >= 2:
                     current_key_id, current_key = keys[0], keys[1]
         
-        # 3. Extract URL and finalize channel object
+        # 3. Extract URL and save channel
         elif line.startswith("https://") and ".mpd" in line:
             parts = line.split('|cookie=')
             url = parts[0].strip()
             cookie = parts[1].strip() if len(parts) > 1 else ""
             
-            # Identify name from URL
+            # Extract name from URL slug
             match = re.search(r'/bpk-tv/([^/]+)/', url)
             ch_name = match.group(1) if match else "Channel"
 
             channels.append({
                 "name": ch_name,
-                "tvg_id": current_tvg_id, # Added this
+                "id": current_tvg_id,
+                "logo": current_logo,
                 "url": url,
                 "keyId": current_key_id,
                 "key": current_key,
@@ -113,8 +119,9 @@ def generate():
         safe_name = ch['name'].replace(' ', '_')
         file_path = os.path.join(OUTPUT_DIR, f"{safe_name}.html")
         
+        # Build HTML content
         content = HTML_TEMPLATE.replace("{CHANNEL_TITLE}", ch['name'].replace('_', ' ')) \
-                               .replace("{TVG_ID}", ch['tvg_id']) \
+                               .replace("{LOGO_URL}", ch['logo']) \
                                .replace("{STREAM_URL}", ch['url']) \
                                .replace("{KEY_ID}", ch['keyId']) \
                                .replace("{KEY}", ch['key']) \
@@ -123,10 +130,11 @@ def generate():
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
 
-    with open(os.path.join(OUTPUT_DIR, "channels.json"), "w") as f:
+    # Save metadata for the dashboard
+    with open(os.path.join(OUTPUT_DIR, "channels.json"), "w", encoding="utf-8") as f:
         json.dump(channels, f, indent=2)
     
-    print(f"Done! Processed {len(channels)} channels with TVG IDs.")
+    print(f"Success! Generated {len(channels)} channels with logos and IDs.")
 
 if __name__ == "__main__":
     generate()
