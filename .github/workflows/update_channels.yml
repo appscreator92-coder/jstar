@@ -25,7 +25,7 @@ jobs:
         run: pip install requests
 
       - name: Generate channel HTML files
-        run: python sports.py
+        run: python generate_channels.py
 
       - name: Check for changes
         id: changes
