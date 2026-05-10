@@ -328,7 +328,7 @@ def generate():
             
             # Specific mappings for tricky names
             if ch_name == "Star_Sports_Select_HD_1_BTS":
-                logo_path = f"https://jiotv.catchup.cdn.jio.com/dare_images/images/Star_Sports_Select_1.png"
+                logo_path = "https://jiotv.catchup.cdn.jio.com/dare_images/images/Star_Sports_Select_1.png"
             
             if not logo_path:
                 if os.path.exists(f"https://jiotv.catchup.cdn.jio.com/dare_images/images/{base_name}.png"):
