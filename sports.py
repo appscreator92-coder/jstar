@@ -3,7 +3,7 @@ import re
 import json
 
 def extract():
-    url = "https://raw.githubusercontent.com/rkdyiptv/Playlist/refs/heads/main/Playlist/Cricket.m3u"
+    url = "https://raw.githubusercontent.com/rkdyiptv/Playlist/refs/heads/main/Playlist/Cricket.m3u/index.html"
     
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
