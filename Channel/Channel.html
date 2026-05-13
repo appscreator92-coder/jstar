@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Channel</title>
-<link rel="icon" type="image/png" href="https://serveproxy.com/?url=https://img.sofascore.com/api/v1/team/216006/image">
+<link rel="icon" type="image/png" href="https://serveproxy.com/?url=https://img.sofascore.com/api/v1/team/187843/image">
 <meta name="referrer" content="no-referrer">
 <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.16.2/dist/shaka-player.ui.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/shaka-player@4.16.2/dist/controls.css"/>
@@ -17,7 +17,7 @@ video{width:100%;height:100%;object-fit:contain}
 </head>
 <body>
 <div class="shaka-video-container" id="player-container">
-<video id="video" autoplay muted playsinline poster="https://serveproxy.com/?url=https://img.sofascore.com/api/v1/team/216006/image"></video>
+<video id="video" autoplay muted playsinline poster="https://serveproxy.com/?url=https://img.sofascore.com/api/v1/team/187843/image"></video>
 </div>
 <script>
 (async () => {
@@ -26,7 +26,7 @@ video{width:100%;height:100%;object-fit:contain}
     const player = new shaka.Player(video);
     const ui = new shaka.ui.Overlay(player, document.getElementById('player-container'), video);
 
-    const drmConfig = ("368d67493ff259d9823b96b89b761386" && "1bd0324aa4f1473fe0612cffe46b05a2") ? {clearKeys:{"368d67493ff259d9823b96b89b761386":"1bd0324aa4f1473fe0612cffe46b05a2"}} : {};
+    const drmConfig = ("c18e0a678b70572ca99f9efe1f297f5a" && "ddf3933d1fbc8c5d1f84870c3b56a22c") ? {clearKeys:{"c18e0a678b70572ca99f9efe1f297f5a":"ddf3933d1fbc8c5d1f84870c3b56a22c"}} : {};
     player.configure({ drm: drmConfig });
 
     player.getNetworkingEngine().registerRequestFilter((type, request) => {
@@ -37,7 +37,7 @@ video{width:100%;height:100%;object-fit:contain}
     });
 
     try {
-        await player.load("https://dck1-ac-live.cdn.indazn.com/out/v1/814bffb9b389f652/d7c17f9575ba40798a8c63c738b150b3/index.mpd");
+        await player.load("https://dck1-ac-live.cdn.indazn.com/out/v1/814bffb9b389f652/0fb45955afd944b19d988688141c0da3/index.mpd");
     } catch (e) { console.error("Load failed", e); }
 })();
 </script>
