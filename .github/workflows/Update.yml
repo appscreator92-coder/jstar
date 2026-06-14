@@ -1,0 +1,35 @@
+name: Daily Cookie Refresh
+on:
+  schedule:
+ #   - cron: '0 0 * * *' # Runs at midnight UTC
+  workflow_dispatch:   # Allows manual "Run" button in GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Crucial for pushing changes back
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run update script
+        run: python Cookie.py
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add playlist.json
+          # Only commit if there are changes to avoid errors
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Cookie Refreshed $(date)" && git push)
