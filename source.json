@@ -1,0 +1,6 @@
+{
+  "name": "Live Stream Config",
+  "version": "1.0",
+  "#EXTHTTP": "{\"cookie\":\"__hdnea__=st=0~exp=0~acl=/*~hmac=placeholder_value\"}",
+  "description": "This cookie will be updated automatically by the Python script."
+}
