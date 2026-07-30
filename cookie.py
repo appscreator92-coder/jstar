@@ -8,38 +8,30 @@ def save_hdnea_cookie():
     output_file = "cookie.json"
     
     try:
-        print(f"[*] Fetching playlist from {url}...")
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        
         playlist_content = response.text
         
-        # Search for the __hdnea__ token in the playlist content
-        match = re.search(r'(__hdnea__=[^\s]+)', playlist_content)
+        # Search for the __hdnea__ token in the fetched playlist
+        match = re.search(r'(__hdnea__=[^\s"]+)', playlist_content)
         
         if match:
             hdnea_value = match.group(1)
-            
-            # Get current timestamp in "HH:MM DD-MM-YYYY" format
             current_time = datetime.now().strftime("%H:%M %d-%m-%Y")
             
-            # Structure the data as requested
             data_to_save = [
                 {"last_updated": current_time},
                 {"cookie": hdnea_value}
             ]
             
-            # Write to cookie.json
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(data_to_save, f, indent=2)
-                
-            print(f"[+] Successfully saved token to {output_file} at {current_time}")
-            print(json.dumps(data_to_save, indent=2))
+            print(f"[+] Successfully updated {output_file}")
         else:
-            print("[-] Error: __hdnea__ token not found in the playlist.")
+            print("[-] Token not found in response content.")
             
-    except requests.exceptions.RequestException as e:
-        print(f"[-] Network error: {e}")
+    except Exception as e:
+        print(f"[-] Error: {e}")
 
 if __name__ == "__main__":
     save_hdnea_cookie()
