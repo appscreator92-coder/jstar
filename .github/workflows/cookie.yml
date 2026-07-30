@@ -28,7 +28,7 @@ jobs:
 
       - name: Run Script to Update Cookie
         run: |
-          python script.py
+          python cookie.py
 
       - name: Commit and Push Changes
         run: |
