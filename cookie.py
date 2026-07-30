@@ -1,8 +1,11 @@
+import json
 import re
+from datetime import datetime
 import requests
 
-def extract_hdnea_from_playlist():
+def save_hdnea_cookie():
     url = "https://jio.shoeblivesite.dpdns.org/"
+    output_file = "cookie.json"
     
     try:
         print(f"[*] Fetching playlist from {url}...")
@@ -11,22 +14,32 @@ def extract_hdnea_from_playlist():
         
         playlist_content = response.text
         
-        # Regex to find all instances of __hdnea__ parameters in the URLs
-        # This will capture the parameter string like: ?__hdnea__=st=...
-        hdnea_patterns = re.findall(r'(__hdnea__=[^"\s]+)', playlist_content)
+        # Search for the __hdnea__ token in the playlist content
+        match = re.search(r'(__hdnea__=[^\s]+)', playlist_content)
         
-        if hdnea_patterns:
-            # Grab the unique tokens found
-            unique_tokens = list(set(hdnea_patterns))
-            print(f"\n[+] Success! Found {len(unique_tokens)} unique __hdnea__ token instance(s):")
-            for idx, token in enumerate(unique_tokens, 1):
-                print(f"\n--- Token {idx} ---")
-                print(token)
+        if match:
+            hdnea_value = match.group(1)
+            
+            # Get current timestamp in "HH:MM DD-MM-YYYY" format
+            current_time = datetime.now().strftime("%H:%M %d-%m-%Y")
+            
+            # Structure the data as requested
+            data_to_save = [
+                {"last_updated": current_time},
+                {"cookie": hdnea_value}
+            ]
+            
+            # Write to cookie.json
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(data_to_save, f, indent=2)
+                
+            print(f"[+] Successfully saved token to {output_file} at {current_time}")
+            print(json.dumps(data_to_save, indent=2))
         else:
-            print("\n[-] No __hdnea__ tokens found in the playlist response.")
+            print("[-] Error: __hdnea__ token not found in the playlist.")
             
     except requests.exceptions.RequestException as e:
-        print(f"\n[-] Error fetching the URL: {e}")
+        print(f"[-] Network error: {e}")
 
 if __name__ == "__main__":
-    extract_hdnea_from_playlist()
+    save_hdnea_cookie()
