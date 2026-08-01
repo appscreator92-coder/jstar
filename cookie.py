@@ -4,7 +4,7 @@ from datetime import datetime
 import requests
 
 def save_hdnea_cookie():
-    url = "https://jio.shoeblivesite.dpdns.org/"
+    url = "https://raw.githubusercontent.com/joiptv/jojo/refs/heads/main/Sir.m3u"
     output_file = "cookie.json"
     
     try:
