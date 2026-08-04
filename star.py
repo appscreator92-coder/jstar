@@ -1,71 +1,130 @@
-import requests
-import re
-import json
 from datetime import datetime
+import json
+import re
+import requests
 
-# URL for the M3U source
-M3U_URL = "https://raw.githubusercontent.com/rkdyiptv/Playlist/refs/heads/main/Playlist/Cricket.m3u/index.html"
-OUTPUT_FILE = "star.json"
 
-def generate_report():
-    print("Fetching and parsing playlist...")
+def parse_m3u(content):
+  """Parses the specific M3U content format with EXTINF, EXTHTTP, and URLs."""
+  channels = []
+  lines = content.splitlines()
+
+  current_channel = {}
+  current_headers = {}
+
+  extinf_pattern = re.compile(
+      r'#EXTINF:-1.*?tvg-id="([^"]+)".*?tvg-name="([^"]+)".*?,\s*(.*)$'
+  )
+
+  for line in lines:
+    line = line.strip()
+
+    if line.startswith("#EXTINF:"):
+      # Reset for a new channel entry
+      current_channel = {}
+      current_headers = {}
+      match = extinf_pattern.search(line)
+      if match:
+        current_channel["channel_id"] = match.group(1)
+        current_channel["channel_name"] = match.group(2)
+
+    elif line.startswith("#EXTHTTP:"):
+      try:
+        # Extract cookie or json data if present in EXTHTTP
+        json_str = line.replace("#EXTHTTP:", "").strip()
+        headers_data = json.loads(json_str)
+        current_headers.update(headers_data)
+      except json.JSONDecodeError:
+        pass
+
+    elif line and not line.startswith("#") and current_channel:
+      # This is the stream URL line
+      current_channel["url"] = line
+      current_channel["headers"] = current_headers
+      channels.append(current_channel)
+      current_channel = {}
+      current_headers = {}
+
+  return channels
+
+
+def main():
+  m3u_url = "https://raw.githubusercontent.com/Sflex0719/m3u/refs/heads/main/Zio.m3u"
+
+  try:
+    response = requests.get(m3u_url, timeout=15)
+    response.raise_for_status()
+    m3u_content = response.text
+  except requests.exceptions.RequestException as e:
+    print(f"Error fetching M3U file: {e}")
+    return
+
+  channels = parse_m3u(m3u_content)
+
+  successful_results = []
+  failed_results = []
+
+  # Process and check each parsed channel
+  for ch in channels:
+    channel_id = ch["channel_id"]
+    channel_name = ch["channel_name"]
+    target_url = ch["url"]
+    headers = ch.get("headers", {})
+
     try:
-        response = requests.get(M3U_URL, timeout=20)
-        response.raise_for_status()
-        lines = response.text.splitlines()
-    except Exception as e:
-        print(f"Network error: {e}")
-        return
+      # Use HEAD or GET with appropriate headers (like cookies) to test stream availability
+      # Some CDN endpoints require headers/cookies to return proper status codes instead of 450/403
+      res = requests.head(
+          target_url, headers=headers, timeout=5, allow_redirects=True
+      )
+      http_code = res.status_code
+      final_url = res.url
 
-    failed_results = []
-    
-    for i in range(len(lines)):
-        current_line = lines[i].strip()
-        
-        if current_line.startswith("#EXTINF"):
-            # 1. Extract Channel Name
-            name_parts = current_line.split(",")
-            channel_name = name_parts[-1].strip() if name_parts else "Unknown"
-            
-            # 2. Extract tvg-id
-            id_match = re.search(r'tvg-id="(\d+)"', current_line)
-            channel_id = id_match.group(1) if id_match else "0"
-            
-            # 3. Get and Modify the URL
-            full_url = ""
-            for j in range(i + 1, min(i + 4, len(lines))):
-                next_line = lines[j].strip()
-                if next_line.startswith("http"):
-                    # FIX: Replace '|cookie=' with '?'
-                    full_url = next_line.replace("|cookie=", "?")
-                    break
-            
-            if full_url:
-                failed_results.append({
-                    "channel_id": channel_id,
-                    "channel_name": channel_name,
-                    "status": "failed",
-                    "error_details": {
-                        "http_code": 450,
-                        "error": "",
-                        "final_url": full_url
-                    }
-                })
+      # Consider 200-299 as success status codes
+      if 200 <= http_code < 300:
+        successful_results.append({
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "status": "success",
+            "http_code": http_code,
+            "final_url": final_url,
+            "playlist_data": "API failed: invalid response",  # Preserved as per your layout structure
+        })
+      else:
+        failed_results.append({
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "status": "failed",
+            "error_details": {
+                "http_code": http_code,
+                "error": "",
+                "final_url": final_url,
+            },
+        })
+    except requests.exceptions.RequestException as e:
+      failed_results.append({
+          "channel_id": channel_id,
+          "channel_name": channel_name,
+          "status": "failed",
+          "error_details": {
+              "http_code": 500,
+              "error": str(e),
+              "final_url": target_url,
+          },
+      })
 
-    # Final JSON Structure
-    output_data = {
-        "total_channels": len(failed_results),
-        "successful_channels": 0,
-        "failed_channels": len(failed_results),
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "successful_results": [],
-        "failed_results": failed_results
-    }
+  output_data = {
+      "total_channels": len(channels),
+      "successful_channels": len(successful_results),
+      "failed_channels": len(failed_results),
+      "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+      "successful_results": successful_results,
+      "failed_results": failed_results,
+  }
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=4)
+  # Print JSON formatted to match your target template layout
+  print(json.dumps(output_data, indent=4))
 
-    print(f"Success: Processed {len(failed_results)} channels.")
 
 if __name__ == "__main__":
-    generate_report()
+  main()
