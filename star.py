@@ -47,7 +47,6 @@ def check_channel(ch):
   headers = ch.get("headers", {})
 
   try:
-    # Strict timeout so it never hangs indefinitely
     res = requests.head(
         target_url, headers=headers, timeout=4, allow_redirects=True
     )
@@ -63,7 +62,6 @@ def check_channel(ch):
               "status": "success",
               "http_code": http_code,
               "final_url": final_url,
-              "playlist_data": "API failed: invalid response",
           },
       }
     else:
@@ -111,7 +109,6 @@ def main():
   successful_results = []
   failed_results = []
 
-  # Using ThreadPoolExecutor to check channels concurrently (fast & non-blocking)
   with ThreadPoolExecutor(max_workers=10) as executor:
     futures = {executor.submit(check_channel, ch): ch for ch in channels}
     for future in as_completed(futures):
@@ -125,7 +122,7 @@ def main():
       "total_channels": len(channels),
       "successful_channels": len(successful_results),
       "failed_channels": len(failed_results),
-      "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+      "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
       "successful_results": successful_results,
       "failed_results": failed_results,
   }
