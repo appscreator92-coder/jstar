@@ -28,7 +28,7 @@ jobs:
 
       - name: Run script
         run: |
-          python star.py > star.json
+          python star1.py > star.json
 
       - name: Commit and push changes if results changed
         run: |
