@@ -59,9 +59,11 @@ def main():
     base_url = ch.get("url", "")
     cookie = ch.get("cookie", "")
 
-    # If the URL already contains query parameters, strip everything after the pipe character if present
+    # Strip everything after the pipe character if present, and remove trailing question marks
     if "|" in base_url:
       base_url = base_url.split("|")[0]
+    
+    base_url = base_url.rstrip("?")
 
     if base_url and "?" in base_url:
       final_url = base_url
