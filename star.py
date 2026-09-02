@@ -10,18 +10,19 @@ def parse_m3u(content):
   lines = content.splitlines()
   current_channel = {}
 
-  extinf_pattern = re.compile(
-      r'#EXTINF:-1.*?tvg-id="([^"]+)".*?tvg-name="([^"]+)".*?,\s*(.*)$'
-  )
+  attr_pattern = re.compile(r'([a-zA-Z0-9_-]+)="([^"]*)"')
 
   for line in lines:
     line = line.strip()
     if line.startswith("#EXTINF:"):
       current_channel = {}
-      match = extinf_pattern.search(line)
-      if match:
-        current_channel["channel_id"] = match.group(1)
-        current_channel["channel_name"] = match.group(2)
+      attributes = dict(attr_pattern.findall(line))
+      current_channel["channel_id"] = attributes.get("tvg-id", "")
+      current_channel["channel_name"] = attributes.get("tvg-name", "")
+
+      if not current_channel["channel_name"] and "," in line:
+        current_channel["channel_name"] = line.split(",")[-1].strip()
+
     elif line.startswith("#EXTHTTP:"):
       try:
         json_str = line.replace("#EXTHTTP:", "").strip()
@@ -58,8 +59,8 @@ def main():
     base_url = ch.get("url")
     cookie = ch.get("cookie", "")
 
-    if cookie and "?" in base_url:
-      final_url = f"{base_url}&{cookie}"
+    if base_url and "?" in base_url:
+      final_url = base_url
     elif cookie:
       final_url = f"{base_url}?{cookie}"
     else:
@@ -73,7 +74,6 @@ def main():
         "final_url": final_url,
     })
 
-  # Get current time explicitly set to Indian Standard Time (IST)
   ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime(
       "%Y-%m-%d %H:%M:%S"
   )
