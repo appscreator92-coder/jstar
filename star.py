@@ -56,8 +56,12 @@ def main():
   for ch in channels:
     channel_id = ch.get("channel_id")
     channel_name = ch.get("channel_name")
-    base_url = ch.get("url")
+    base_url = ch.get("url", "")
     cookie = ch.get("cookie", "")
+
+    # If the URL already contains query parameters, strip everything after the pipe character if present
+    if "|" in base_url:
+      base_url = base_url.split("|")[0]
 
     if base_url and "?" in base_url:
       final_url = base_url
