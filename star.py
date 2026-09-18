@@ -40,7 +40,7 @@ def parse_m3u(content):
 
 
 def main():
-  m3u_url = "https://raw.githubusercontent.com/Sflex0719/STBPLUS/refs/heads/main/Zio.m3u"
+  m3u_url = "https://premiumplugx.top/jiostb/mjelo.php?view=raw"
 
   try:
     response = requests.get(m3u_url, timeout=10)
