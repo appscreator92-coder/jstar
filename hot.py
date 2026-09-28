@@ -27,10 +27,10 @@ try:
     data = [{"last_updated": current_time_ist}, {"cookie": cookie_value}]
 
     # Save to cookie.json
-    with open("cookie.json", "w") as f:
+    with open("hot.json", "w") as f:
       json.dump(data, f, indent=2)
 
-    print("Successfully updated cookie.json with IST time")
+    print("Successfully updated hot.json with IST time")
   else:
     print("Cookie could not be found in the playlist.")
 
