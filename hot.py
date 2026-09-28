@@ -1,6 +1,7 @@
+from datetime import datetime
 import json
 import re
-from datetime import datetime
+import pytz
 import requests
 
 # URL of the M3U playlist
@@ -18,17 +19,18 @@ try:
   if cookie_match:
     cookie_value = cookie_match.group(1).strip()
 
-    # Get current time matching the format: "HH:MM DD-MM-YYYY"
-    current_time = datetime.now().strftime("%H:%M %d-%m-%Y")
+    # Get current time in Indian Standard Time (IST)
+    ist_timezone = pytz.timezone("Asia/Kolkata")
+    current_time_ist = datetime.now(ist_timezone).strftime("%H:%M %d-%m-%Y")
 
     # JSON structure matching your target format
-    data = [{"last_updated": current_time}, {"cookie": cookie_value}]
+    data = [{"last_updated": current_time_ist}, {"cookie": cookie_value}]
 
     # Save to cookie.json
-    with open("hot.json", "w") as f:
+    with open("cookie.json", "w") as f:
       json.dump(data, f, indent=2)
 
-    print("Successfully updated cookie.json")
+    print("Successfully updated cookie.json with IST time")
   else:
     print("Cookie could not be found in the playlist.")
 
