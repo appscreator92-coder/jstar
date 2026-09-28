@@ -25,7 +25,7 @@ try:
     data = [{"last_updated": current_time}, {"cookie": cookie_value}]
 
     # Save to cookie.json
-    with open("cookie.json", "w") as f:
+    with open("hot.json", "w") as f:
       json.dump(data, f, indent=2)
 
     print("Successfully updated cookie.json")
