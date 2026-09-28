@@ -26,7 +26,7 @@ try:
     # JSON structure matching your target format
     data = [{"last_updated": current_time_ist}, {"cookie": cookie_value}]
 
-    # Save to cookie.json
+    # Save to hot.json
     with open("hot.json", "w") as f:
       json.dump(data, f, indent=2)
 
