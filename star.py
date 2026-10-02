@@ -40,7 +40,7 @@ def parse_m3u(content):
 
 
 def main():
-  m3u_url = "https://premiumplugx.top/jiostb/mjelo.php?view=raw"
+  m3u_url = "https://m3u.cloudplay.qzz.io/jtvx.m3u"
 
   try:
     response = requests.get(m3u_url, timeout=10)
