@@ -6,95 +6,122 @@ from zoneinfo import ZoneInfo  # Python 3.9+
 
 
 def parse_m3u(content):
-  channels = []
-  lines = content.splitlines()
-  current_channel = {}
+    channels = []
+    lines = content.splitlines()
+    current_channel = {}
 
-  attr_pattern = re.compile(r'([a-zA-Z0-9_-]+)="([^"]*)"')
+    attr_pattern = re.compile(r'([a-zA-Z0-9_-]+)="([^"]*)"')
 
-  for line in lines:
-    line = line.strip()
-    if line.startswith("#EXTINF:"):
-      current_channel = {}
-      attributes = dict(attr_pattern.findall(line))
-      current_channel["channel_id"] = attributes.get("tvg-id", "")
-      current_channel["channel_name"] = attributes.get("tvg-name", "")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
 
-      if not current_channel["channel_name"] and "," in line:
-        current_channel["channel_name"] = line.split(",")[-1].strip()
+        if line.startswith("#EXTINF:"):
+            current_channel = {}
+            attributes = dict(attr_pattern.findall(line))
+            current_channel["channel_id"] = attributes.get("tvg-id", "")
+            current_channel["channel_name"] = attributes.get("tvg-name", "")
 
-    elif line.startswith("#EXTHTTP:"):
-      try:
-        json_str = line.replace("#EXTHTTP:", "").strip()
-        headers_data = json.loads(json_str)
-        if "cookie" in headers_data:
-          current_channel["cookie"] = headers_data["cookie"]
-      except json.JSONDecodeError:
-        pass
-    elif line and not line.startswith("#") and current_channel:
-      current_channel["url"] = line
-      channels.append(current_channel)
-      current_channel = {}
+            # Fallback for channel name after the comma
+            if not current_channel["channel_name"] and "," in line:
+                current_channel["channel_name"] = line.rsplit(",", 1)[-1].strip()
 
-  return channels
+        elif line.startswith("#EXTHTTP:"):
+            try:
+                json_str = line.replace("#EXTHTTP:", "").strip()
+                headers_data = json.loads(json_str)
+                if "cookie" in headers_data:
+                    current_channel["cookie"] = headers_data["cookie"]
+            except json.JSONDecodeError:
+                pass
+
+        elif not line.startswith("#") and current_channel:
+            current_channel["url"] = line
+            channels.append(current_channel)
+            current_channel = {}
+
+    return channels
+
+
+def fetch_m3u_content(urls):
+    """Tries fetching from a list of URLs sequentially until one succeeds."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    for url in urls:
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            response.encoding = "utf-8"
+            
+            # Verify the response actually contains M3U data
+            if "#EXTM3U" in response.text or "#EXTINF:" in response.text:
+                return response.text, url
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to fetch from {url}: {e}")
+            continue
+
+    return None, None
 
 
 def main():
-  m3u_url = "https://m3u.cloudplay.qzz.io/jtvx.m3u"
+    m3u_urls = [
+        "https://m3u.cloudplay.qzz.io/jtvx.m3u",
+        "https://premiumplugx.top/jiostb/mjelo.php?view=raw",
+    ]
 
-  try:
-    response = requests.get(m3u_url, timeout=10)
-    response.raise_for_status()
-    m3u_content = response.text
-  except requests.exceptions.RequestException as e:
-    print(f"Error fetching M3U file: {e}")
-    return
+    m3u_content, source_url = fetch_m3u_content(m3u_urls)
 
-  channels = parse_m3u(m3u_content)
-  successful_results = []
+    if not m3u_content:
+        print(json.dumps({"error": "Failed to fetch valid M3U from all sources."}))
+        return
 
-  for ch in channels:
-    channel_id = ch.get("channel_id")
-    channel_name = ch.get("channel_name")
-    base_url = ch.get("url", "")
-    cookie = ch.get("cookie", "")
+    channels = parse_m3u(m3u_content)
+    successful_results = []
 
-    # Strip everything after the pipe character if present, and remove trailing question marks
-    if "|" in base_url:
-      base_url = base_url.split("|")[0]
-    
-    base_url = base_url.rstrip("?")
+    for ch in channels:
+        channel_id = ch.get("channel_id")
+        channel_name = ch.get("channel_name")
+        base_url = ch.get("url", "")
+        cookie = ch.get("cookie", "")
 
-    if base_url and "?" in base_url:
-      final_url = base_url
-    elif cookie:
-      final_url = f"{base_url}?{cookie}"
-    else:
-      final_url = base_url
+        # Strip pipe attributes if present
+        if "|" in base_url:
+            base_url = base_url.split("|")[0]
 
-    successful_results.append({
-        "channel_id": channel_id,
-        "channel_name": channel_name,
-        "status": "success",
-        "http_code": 200,
-        "final_url": final_url,
-    })
+        # Construct final URL properly handling existing query parameters
+        if cookie:
+            separator = "&" if "?" in base_url else "?"
+            final_url = f"{base_url}{separator}{cookie}"
+        else:
+            final_url = base_url
 
-  ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime(
-      "%Y-%m-%d %H:%M:%S"
-  )
+        successful_results.append({
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "status": "success",
+            "http_code": 200,
+            "final_url": final_url,
+        })
 
-  output_data = {
-      "total_channels": len(channels),
-      "successful_channels": len(successful_results),
-      "failed_channels": 0,
-      "timestamp": ist_time,
-      "successful_results": successful_results,
-      "failed_results": [],
-  }
+    ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
-  print(json.dumps(output_data, indent=4))
+    output_data = {
+        "source_url": source_url,
+        "total_channels": len(channels),
+        "successful_channels": len(successful_results),
+        "failed_channels": 0,
+        "timestamp": ist_time,
+        "successful_results": successful_results,
+        "failed_results": [],
+    }
+
+    print(json.dumps(output_data, indent=4, ensure_ascii=False))
 
 
 if __name__ == "__main__":
-  main()
+    main()
