@@ -74,9 +74,7 @@ def main():
 
     m3u_content, source_url = fetch_m3u_content(m3u_urls)
 
-    if not m3u_content:
-        print(json.dumps({"error": "Failed to fetch valid M3U from all sources."}))
-        return
+   
 
     channels = parse_m3u(m3u_content)
     successful_results = []
