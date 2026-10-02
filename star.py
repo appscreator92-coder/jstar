@@ -45,7 +45,7 @@ def parse_m3u(content):
 
 
 def fetch_m3u_content(urls):
-    """Tries fetching from a list of URLs sequentially until one succeeds."""
+    """Tries fetching from a list of URLs sequentially until one succeeds, suppressing intermediate fetch errors."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -59,8 +59,7 @@ def fetch_m3u_content(urls):
             # Verify the response actually contains M3U data
             if "#EXTM3U" in response.text or "#EXTINF:" in response.text:
                 return response.text, url
-        except requests.exceptions.RequestException as e:
-            print(f"Failed to fetch from {url}: {e}")
+        except requests.exceptions.RequestException:
             continue
 
     return None, None
@@ -68,13 +67,15 @@ def fetch_m3u_content(urls):
 
 def main():
     m3u_urls = [
-        "https://m3u.cloudplay.qzz.io/",
+        "https://m3u.cloudplay.qzz.io/jtvx.m3u",
         "https://premiumplugx.top/jiostb/mjelo.php?view=raw",
     ]
 
     m3u_content, source_url = fetch_m3u_content(m3u_urls)
 
-   
+    if not m3u_content:
+        print(json.dumps({"error": "Failed to fetch valid M3U from all sources."}))
+        return
 
     channels = parse_m3u(m3u_content)
     successful_results = []
