@@ -3,7 +3,7 @@ name: Parse M3U and Generate JSON
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */2 * * *' # Runs every 2 hours
+    - cron: '0 */1 * * *' # Runs every 2 hours
 
 jobs:
   run-parser:
