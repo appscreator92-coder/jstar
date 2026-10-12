@@ -3,7 +3,7 @@ name: Parse M3U and Generate JSON
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */3 * * *' # Runs every 2 hours
+    - cron: '0 */2 * * *' # Runs strictly every 2 hours
 
 jobs:
   run-parser:
@@ -15,6 +15,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
