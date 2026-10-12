@@ -2,8 +2,13 @@ name: Update Cookie
 
 on:
   schedule:
-    - cron: '0 */1 * * *'  # Runs every 6 hours (adjust as needed)
+    # Runs every 6 hours precisely (at minute 0 of every 6th hour: 00:00, 06:00, 12:00, 18:00)
+    - cron: '0 */6 * * *'  
   workflow_dispatch:        # Allows manual trigger from GitHub Actions tab
+
+concurrency:
+  group: update-cookie-job
+  cancel-in-progress: false # Ensures a running job finishes instead of getting skipped or killed
 
 jobs:
   update-cookie:
