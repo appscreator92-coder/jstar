@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 import requests
 
 def save_hdnea_cookie():
-    url = "https://raw.githubusercontent.com/qwerty180506/Geo/refs/heads/main/jiotv_cf.m3u"
+    url = "https://raw.githubusercontent.com/sixpg/zeyo-test/refs/heads/main/jtv.m3u"
     output_file = "cookie.json"
     
     try:
