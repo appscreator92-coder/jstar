@@ -37,17 +37,7 @@ def parse_m3u(content):
                 pass
 
         elif not line.startswith("#") and current_channel:
-            url_line = line
-            # Extract cookie from pipe attributes if present in the URL line
-            if "|" in url_line:
-                base_url, params = url_line.split("|", 1)
-                current_channel["url"] = base_url
-                for param in params.split("&"):
-                    if param.lower().startswith("cookie="):
-                        current_channel["cookie"] = param.split("=", 1)[1]
-            else:
-                current_channel["url"] = url_line
-
+            current_channel["url"] = line
             channels.append(current_channel)
             current_channel = {}
 
@@ -77,10 +67,10 @@ def fetch_m3u_content(urls):
 
 def main():
     m3u_urls = [
+        "https://premiumplugx.top/jiostb/mjelo.php?view=raw",
         "https://alex4528.site/jplus/playlist.m3u",
         "https://raw.githubusercontent.com/sixpg/zeyo-test/refs/heads/main/jtv.m3u",
         "https://m3u.cloudplay.qzz.io/jtvx.m3u",
-        "https://premiumplugx.top/jiostb/mjelo.php?view=raw",
     ]
 
     m3u_content, source_url = fetch_m3u_content(m3u_urls)
