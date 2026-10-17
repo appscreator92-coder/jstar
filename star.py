@@ -18,6 +18,9 @@ def parse_m3u(content):
             continue
 
         if line.startswith("#EXTINF:"):
+            if current_channel and "url" in current_channel:
+                channels.append(current_channel)
+
             current_channel = {}
             attributes = dict(attr_pattern.findall(line))
             current_channel["channel_id"] = attributes.get("tvg-id", "")
@@ -27,14 +30,27 @@ def parse_m3u(content):
             if not current_channel["channel_name"] and "," in line:
                 current_channel["channel_name"] = line.rsplit(",", 1)[-1].strip()
 
+        elif line.startswith("#KODIPROP:"):
+            prop = line.replace("#KODIPROP:", "").strip()
+            if "stream_headers=" in prop:
+                headers_str = prop.split("=", 1)[1]
+                for part in headers_str.split("&"):
+                    if part.lower().startswith("cookie="):
+                        current_channel["cookie"] = part.split("=", 1)[1]
+
         elif line.startswith("#EXTHTTP:"):
             try:
                 json_str = line.replace("#EXTHTTP:", "").strip()
                 headers_data = json.loads(json_str)
-                if "cookie" in headers_data:
-                    current_channel["cookie"] = headers_data["cookie"]
+                for k, v in headers_data.items():
+                    if k.lower() == "cookie":
+                        current_channel["cookie"] = v
             except json.JSONDecodeError:
                 pass
+
+        elif line.startswith("#EXTVLCOPT:"):
+            if "http-cookie=" in line.lower():
+                current_channel["cookie"] = line.split("=", 1)[1].strip()
 
         elif not line.startswith("#") and current_channel:
             url_line = line
@@ -51,11 +67,13 @@ def parse_m3u(content):
             channels.append(current_channel)
             current_channel = {}
 
+    if current_channel and "url" in current_channel:
+        channels.append(current_channel)
+
     return channels
 
 
 def fetch_m3u_content(urls):
-    """Tries fetching from a list of URLs sequentially until one succeeds, suppressing intermediate fetch errors."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -66,7 +84,6 @@ def fetch_m3u_content(urls):
             response.raise_for_status()
             response.encoding = "utf-8"
             
-            # Verify the response actually contains M3U data
             if "#EXTM3U" in response.text or "#EXTINF:" in response.text:
                 return response.text, url
         except requests.exceptions.RequestException:
@@ -99,11 +116,12 @@ def main():
         base_url = ch.get("url", "")
         cookie = ch.get("cookie", "")
 
-        # Strip pipe attributes if present
+        if not base_url:
+            continue
+
         if "|" in base_url:
             base_url = base_url.split("|")[0].rstrip("?")
 
-        # Construct final URL properly handling existing query parameters
         if cookie:
             separator = "&" if "?" in base_url else "?"
             final_url = f"{base_url}{separator}{cookie}"
