@@ -77,8 +77,8 @@ def fetch_m3u_content(urls):
 
 def main():
     m3u_urls = [
-        "https://premiumplugx.top/jiostb/mjelo.php?view=raw",
         "https://raw.githubusercontent.com/sixpg/zeyo-test/refs/heads/main/jtv.m3u",
+        "https://premiumplugx.top/jiostb/mjelo.php?view=raw",
         "https://m3u.cloudplay.qzz.io/jtvx.m3u",
         "https://alex4528.site/jplus/playlist.m3u",
     ]
