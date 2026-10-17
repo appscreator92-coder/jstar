@@ -77,6 +77,7 @@ def fetch_m3u_content(urls):
 
 def main():
     m3u_urls = [
+        "https://raw.githubusercontent.com/sportlive18/sportlink-update/refs/heads/main/zio.m3u",
         "https://raw.githubusercontent.com/sixpg/zeyo-test/refs/heads/main/jtv.m3u",
         "https://premiumplugx.top/jiostb/mjelo.php?view=raw",
         "https://m3u.cloudplay.qzz.io/jtvx.m3u",
