@@ -33,14 +33,22 @@ def transform_jtv_data(json_url):
     }
     successful_results.append(channel_result)
 
-  output_data = {
-      "source_url": json_url,
-      "total_channels": total_channels,
-      "successful_channels": total_channels,
-      "failed_channels": 0,
-      "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-      "successful_results": successful_results,
-  }
+ from datetime import datetime, timedelta, timezone
+
+# Define Indian Standard Time (IST is UTC +5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+# Get current time in IST
+current_ist_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+
+output_data = {
+    "source_url": json_url,
+    "total_channels": total_channels,
+    "successful_channels": total_channels,
+    "failed_channels": 0,
+    "timestamp": current_ist_time,  # This will now be strictly IST
+    "successful_results": successful_results,
+}
 
   return output_data
 
