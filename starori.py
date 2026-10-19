@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 import requests
 
@@ -33,22 +33,18 @@ def transform_jtv_data(json_url):
     }
     successful_results.append(channel_result)
 
- from datetime import datetime, timedelta, timezone
+  # Define Indian Standard Time (IST is UTC +5:30)
+  IST = timezone(timedelta(hours=5, minutes=30))
+  current_ist_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
-# Define Indian Standard Time (IST is UTC +5:30)
-IST = timezone(timedelta(hours=5, minutes=30))
-
-# Get current time in IST
-current_ist_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-
-output_data = {
-    "source_url": json_url,
-    "total_channels": total_channels,
-    "successful_channels": total_channels,
-    "failed_channels": 0,
-    "timestamp": current_ist_time,  # This will now be strictly IST
-    "successful_results": successful_results,
-}
+  output_data = {
+      "source_url": json_url,
+      "total_channels": total_channels,
+      "successful_channels": total_channels,
+      "failed_channels": 0,
+      "timestamp": current_ist_time,
+      "successful_results": successful_results,
+  }
 
   return output_data
 
@@ -60,4 +56,4 @@ if __name__ == "__main__":
   if transformed_json:
     with open("star1.json", "w", encoding="utf-8") as f:
       json.dump(transformed_json, f, indent=4)
-    print("Successfully generated output.json")
+    print("Successfully generated star1.json")
