@@ -3,7 +3,7 @@ name: Auto Update JSON
 on:
   schedule:
     # Runs every 3 hours. Change the cron expression if you want a different frequency.
-    - cron: '0 */3 * * *'
+    - cron: '0 */2 * * *'
   workflow_dispatch: # Allows you to manually trigger it from the GitHub Actions tab
 
 jobs:
