@@ -5,7 +5,7 @@ import pytz
 import requests
 
 # URL of the M3U playlist
-url = "https://premiumplugx.com/htt/hot.php?playlist=1"
+url = "https://sportlink-playlist.pages.dev/tstar.m3u"
 
 try:
   # Fetch the playlist content
