@@ -50,7 +50,7 @@ def transform_jtv_data(json_url):
 
 
 if __name__ == "__main__":
-  url = "https://sayan-jio-tv.pages.dev/playlist.m3u"
+  url = "https://sportlink-tv10.pages.dev/jtvplus.json"
   transformed_json = transform_jtv_data(url)
 
   if transformed_json:
