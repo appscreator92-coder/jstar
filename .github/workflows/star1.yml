@@ -7,6 +7,10 @@ on:
 
   workflow_dispatch:
 
+concurrency:
+  group: auto-update-star1
+  cancel-in-progress: false
+
 jobs:
   update-data:
     runs-on: ubuntu-latest
@@ -17,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,12 +35,25 @@ jobs:
       - name: Run Python script
         run: python starori.py
 
-      - name: Commit and push if changes detected
+      - name: Commit and push changes
         run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
+
           git add star1.json
-          git diff --cached --quiet || (
-            git commit -m "Auto-update JSON star1 [skip ci]" &&
-            git push
-          )
+
+          if git diff --cached --quiet; then
+            echo "No changes detected."
+            exit 0
+          fi
+
+          git commit -m "Auto-update JSON star1 [skip ci]"
+
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            echo "Push attempt $i failed. Retrying..."
+            sleep 5
+          done
+
+          echo "Failed to push after 3 attempts."
+          exit 1
