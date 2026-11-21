@@ -2,105 +2,90 @@
 import json
 import re
 import time
-import random
+import ast
 import threading
-
 from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse, parse_qs
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 
-# =====================================================
+# =========================================================
 # CONFIGURATION
-# =====================================================
+# =========================================================
 
-JSON_URL = (
+SOURCE_URL = (
     "https://raw.githubusercontent.com/"
     "appscreator92-coder/index/refs/heads/main/jnew7.json"
 )
 
-PLAY_API_URL = "https://b4uplay.com/api/vizha/play.php"
+API_URL = "https://b4uplay.com/api/vizha/play.php"
 
-OUTPUT_FILE = Path("hdnea_tokens.json")
+OUTPUT_FILE = "hdnea_tokens.json"
 
-MAX_WORKERS = 16
-REQUEST_TIMEOUT = 20
+MAX_WORKERS = 12
+TIMEOUT = 30
 MAX_RETRIES = 3
-
-# =====================================================
-# REQUEST HEADERS
-# =====================================================
-
-HEADERS = {
-    "accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,"
-        "application/signed-exchange;v=b3;q=0.7"
-    ),
-    "accept-encoding": "gzip, deflate, br, zstd",
-    "accept-language": "en-US,en;q=0.9",
-    "connection": "keep-alive",
-    "referer": "https://bhoomtv.me/",
-    "sec-ch-ua": (
-        '"Chromium";v="158", "Not.A/Brand";v="24", '
-        '"Google Chrome";v="158"'
-    ),
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-    "sec-fetch-dest": "iframe",
-    "sec-fetch-mode": "navigate",
-    "sec-fetch-site": "cross-site",
-    "sec-fetch-user": "?1",
-    "upgrade-insecure-requests": "1",
-    "user-agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/158.0.0.0 Safari/537.36"
-    ),
-}
-
-
-# =====================================================
-# REGEX PATTERNS
-# =====================================================
-
-STREAM_URL_RE = re.compile(
-    r"""const\s+STREAM_URL\s*=\s*["']([^"']*)["']""",
-    re.IGNORECASE
-)
-
-HDNEA_TOKEN_RE = re.compile(
-    r"""const\s+hdneaToken\s*=\s*["']([^"']*)["']""",
-    re.IGNORECASE
-)
-
-FETCH_ERROR_RE = re.compile(
-    r"""const\s+fetchError\s*=\s*["']([^"']*)["']""",
-    re.IGNORECASE
-)
-
-HDNEA_PARAM_RE = re.compile(
-    r"""__hdnea__=[^&"'\s\\<>]+""",
-    re.IGNORECASE
-)
-
-
-# =====================================================
-# THREAD LOCAL SESSION
-# =====================================================
 
 thread_local = threading.local()
 
 
+# =========================================================
+# HEADERS
+# =========================================================
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/158.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://bhoomtv.me/",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+
+# =========================================================
+# REGEX
+# =========================================================
+
+JS_STRING = r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')"""
+
+STREAM_PATTERN = re.compile(
+    r"\b(?:const|let|var)\s+STREAM_URL\s*=\s*"
+    + JS_STRING,
+    re.IGNORECASE | re.DOTALL
+)
+
+TOKEN_PATTERN = re.compile(
+    r"\b(?:const|let|var)\s+hdneaToken\s*=\s*"
+    + JS_STRING,
+    re.IGNORECASE | re.DOTALL
+)
+
+ERROR_PATTERN = re.compile(
+    r"\b(?:const|let|var)\s+fetchError\s*=\s*"
+    + JS_STRING,
+    re.IGNORECASE | re.DOTALL
+)
+
+
+# =========================================================
+# THREAD SESSION
+# =========================================================
+
 def get_session():
 
-    session = getattr(thread_local, "session", None)
-
-    if session is None:
+    if not hasattr(thread_local, "session"):
 
         session = requests.Session()
 
@@ -110,17 +95,14 @@ def get_session():
             read=MAX_RETRIES,
             status=MAX_RETRIES,
             backoff_factor=1,
-            status_forcelist=[
-                429, 500, 502, 503, 504
-            ],
+            status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
-            respect_retry_after_header=True,
         )
 
         adapter = HTTPAdapter(
             max_retries=retry,
-            pool_connections=4,
-            pool_maxsize=4,
+            pool_connections=MAX_WORKERS,
+            pool_maxsize=MAX_WORKERS,
         )
 
         session.mount("https://", adapter)
@@ -128,20 +110,95 @@ def get_session():
 
         thread_local.session = session
 
-    return session
+    return thread_local.session
 
 
-# =====================================================
-# LOAD CHANNEL JSON
-# =====================================================
+# =========================================================
+# DECODE JAVASCRIPT STRING
+# =========================================================
+
+def decode_js_string(value):
+
+    try:
+        return ast.literal_eval(value)
+
+    except Exception:
+        return value[1:-1]
+
+
+# =========================================================
+# EXTRACT JAVASCRIPT VARIABLE
+# =========================================================
+
+def extract_variable(pattern, html):
+
+    match = pattern.search(html)
+
+    if not match:
+        return ""
+
+    return decode_js_string(match.group(1)).strip()
+
+
+# =========================================================
+# EXTRACT STREAM AND TOKEN
+# =========================================================
+
+def extract_stream(html):
+
+    stream_url = extract_variable(
+        STREAM_PATTERN, html
+    )
+
+    hdnea_token = extract_variable(
+        TOKEN_PATTERN, html
+    )
+
+    fetch_error = extract_variable(
+        ERROR_PATTERN, html
+    )
+
+    stream_url = stream_url.replace("\\/", "/")
+
+    # If the URL already has the token, preserve it.
+
+    if stream_url and "__hdnea__=" in stream_url:
+        return stream_url, hdnea_token, fetch_error
+
+    # Otherwise append the separately extracted token.
+
+    if stream_url and hdnea_token:
+
+        token = hdnea_token
+
+        if not token.startswith("__hdnea__="):
+            token = "__hdnea__=" + token
+
+        separator = "&" if "?" in stream_url else "?"
+
+        stream_url += separator + token
+
+    # Last fallback: obtain token from URL query.
+
+    if stream_url and "__hdnea__=" in stream_url:
+
+        return stream_url, hdnea_token, fetch_error
+
+    return stream_url, hdnea_token, fetch_error
+
+
+# =========================================================
+# LOAD CHANNELS FROM jnew7.json
+# =========================================================
 
 def load_channels():
 
-    print("Downloading jnew7.json...")
+    print("Downloading channel JSON...")
 
     response = requests.get(
-        JSON_URL,
-        timeout=30
+        SOURCE_URL,
+        timeout=TIMEOUT,
+        headers={"User-Agent": HEADERS["User-Agent"]}
     )
 
     response.raise_for_status()
@@ -149,7 +206,6 @@ def load_channels():
     data = response.json()
 
     if isinstance(data, list):
-
         channels = data
 
     elif isinstance(data, dict):
@@ -163,130 +219,83 @@ def load_channels():
                 break
 
         if channels is None:
-            raise ValueError("Channel list not found in JSON")
+            raise ValueError(
+                "Could not find channel list in jnew7.json"
+            )
 
     else:
+        raise ValueError("Invalid JSON format")
 
-        raise ValueError("Invalid JSON structure")
+    valid = []
 
-    channels = [
-        item for item in channels
-        if isinstance(item, dict)
-        and str(item.get("id", "")).strip()
-    ]
+    for channel in channels:
 
-    print(f"Total valid channels: {len(channels)}")
+        if not isinstance(channel, dict):
+            continue
 
-    return channels
+        channel_id = str(channel.get("id", "")).strip()
 
+        if not channel_id:
+            continue
 
-# =====================================================
-# EXTRACT STREAM URL AND HDNEA TOKEN
-# =====================================================
+        valid.append({
+            "id": channel_id,
+            "name": str(
+                channel.get("name", channel_id)
+            ).strip()
+        })
 
-def extract_stream_info(html):
+    print("Channels found:", len(valid))
 
-    stream_match = STREAM_URL_RE.search(html)
-    token_match = HDNEA_TOKEN_RE.search(html)
-    error_match = FETCH_ERROR_RE.search(html)
-
-    stream_url = (
-        stream_match.group(1).strip()
-        if stream_match else None
-    )
-
-    hdnea_token = (
-        token_match.group(1).strip()
-        if token_match else None
-    )
-
-    fetch_error = (
-        error_match.group(1).strip()
-        if error_match else None
-    )
-
-    if stream_url:
-
-        stream_url = stream_url.replace("\\/", "/")
-
-    # Fallback: Extract token from STREAM_URL or HTML.
-
-    if not hdnea_token:
-
-        search_target = stream_url or html
-
-        match = HDNEA_PARAM_RE.search(
-            requests.utils.unquote(search_target)
-        )
-
-        if match:
-            hdnea_token = match.group(0)
-
-    # Use STREAM_URL directly when it already contains token.
-
-    if stream_url and hdnea_token:
-
-        if "__hdnea__" not in requests.utils.unquote(stream_url):
-
-            token = hdnea_token
-
-            if not token.startswith("__hdnea__="):
-                token = "__hdnea__=" + token
-
-            separator = "&" if "?" in stream_url else "?"
-
-            stream_url = stream_url + separator + token
-
-    return stream_url, hdnea_token, fetch_error
+    return valid
 
 
-# =====================================================
-# FETCH SINGLE CHANNEL
-# =====================================================
+# =========================================================
+# FETCH ONE CHANNEL
+# =========================================================
 
 def fetch_channel(index, channel):
 
-    channel_id = str(channel["id"]).strip()
-
-    channel_name = str(
-        channel.get("name", "")
-    ).strip()
+    channel_id = channel["id"]
+    channel_name = channel["name"]
 
     try:
-
-        time.sleep(random.uniform(0.05, 0.20))
 
         session = get_session()
 
         response = session.get(
-            PLAY_API_URL,
+            API_URL,
             params={"id": channel_id},
             headers=HEADERS,
-            timeout=REQUEST_TIMEOUT,
+            timeout=TIMEOUT,
             allow_redirects=True,
         )
 
         response.raise_for_status()
 
-        stream_url, hdnea_token, fetch_error = (
-            extract_stream_info(response.text)
-        )
+        html = response.text
 
-        # Successful only when a stream URL and token exist.
+        stream_url, token, fetch_error = extract_stream(html)
 
-        has_token = bool(
-            hdnea_token
+        # A valid result must contain a complete stream URL
+        # with an HDNEA token.
+
+        has_token = (
+            bool(token)
             or (
-                stream_url
-                and "__hdnea__" in requests.utils.unquote(
-                    stream_url
-                )
+                bool(stream_url)
+                and "__hdnea__=" in stream_url
             )
         )
 
         if stream_url and has_token:
 
-            return index, "success", {
+            if "__hdnea__=" not in stream_url:
+                raise ValueError(
+                    "Token was found but URL has no HDNEA parameter"
+                )
+
+            return index, True, {
                 "channel_id": channel_id,
                 "channel_name": channel_name,
                 "status": "success",
@@ -294,37 +303,42 @@ def fetch_channel(index, channel):
                 "final_url": stream_url,
             }
 
-        reason = (
-            fetch_error
-            or (
-                "STREAM_URL not found"
-                if not stream_url
-                else "HDNEA token not found"
+        # Print diagnostics for the first few failed responses.
+
+        if index < 3:
+
+            print("\n========== RESPONSE DEBUG ==========")
+            print("Channel:", channel_name)
+            print("ID:", channel_id)
+            print("HTTP:", response.status_code)
+            print(
+                "Content-Type:",
+                response.headers.get("Content-Type")
             )
+            print("Response length:", len(html))
+            print("Final response URL:", response.url)
+            print("Response preview:")
+            print(html[:1000])
+            print("====================================\n")
+
+        error = fetch_error or (
+            "STREAM_URL not found in API response"
+            if not stream_url
+            else "HDNEA token not found"
         )
 
-        return index, "failed", {
+        return index, False, {
             "channel_id": channel_id,
             "channel_name": channel_name,
             "status": "failed",
             "http_code": response.status_code,
-            "error": reason,
-            "final_url": stream_url,
-        }
-
-    except requests.RequestException as exc:
-
-        return index, "failed", {
-            "channel_id": channel_id,
-            "channel_name": channel_name,
-            "status": "failed",
-            "http_code": None,
-            "error": str(exc),
+            "error": error,
+            "final_url": stream_url or None,
         }
 
     except Exception as exc:
 
-        return index, "failed", {
+        return index, False, {
             "channel_id": channel_id,
             "channel_name": channel_name,
             "status": "failed",
@@ -333,21 +347,26 @@ def fetch_channel(index, channel):
         }
 
 
-# =====================================================
-# MAIN FUNCTION
-# =====================================================
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
 
-    start_time = time.perf_counter()
+    start = time.time()
 
     channels = load_channels()
 
     total = len(channels)
 
-    results = []
+    successful = []
+    failed = []
 
-    print("\nStarting HDNEA token extraction...\n")
+    print("\nStarting token extraction...")
+    print("Workers:", MAX_WORKERS)
+    print("Total:", total)
+
+    results = []
 
     with ThreadPoolExecutor(
         max_workers=MAX_WORKERS
@@ -366,77 +385,65 @@ def main():
 
         for future in as_completed(futures):
 
-            index, status, record = future.result()
+            index, success, result = future.result()
 
-            results.append((index, status, record))
+            results.append((index, success, result))
 
             completed += 1
 
             print(
                 f"[{completed}/{total}] "
-                f"{record['channel_name']} : {status}"
+                f"{result['channel_name']} - "
+                f"{result['status']}"
             )
 
-    # Restore original channel order.
+    # Keep original JSON channel order.
 
     results.sort(key=lambda item: item[0])
 
-    successful_results = [
-        record
-        for _, status, record in results
-        if status == "success"
-    ]
+    for _, success, result in results:
 
-    failed_results = [
-        record
-        for _, status, record in results
-        if status == "failed"
-    ]
+        if success:
+            successful.append(result)
+        else:
+            failed.append(result)
 
-    # Final JSON structure.
-
-    output_data = {
-
-        "source_url": JSON_URL,
-
+    output = {
+        "source_url": SOURCE_URL,
         "total_channels": total,
-
-        "successful_channels": len(successful_results),
-
-        "failed_channels": len(failed_results),
-
+        "successful_channels": len(successful),
+        "failed_channels": len(failed),
         "timestamp": datetime.now(
             timezone.utc
         ).strftime("%Y-%m-%d %H:%M:%S"),
-
-        "successful_results": successful_results,
-
-        "failed_results": failed_results,
-
+        "successful_results": successful,
+        "failed_results": failed,
     }
 
-    # Save output.
+    # Write JSON atomically.
 
-    OUTPUT_FILE.write_text(
-        json.dumps(
-            output_data,
+    temp_file = OUTPUT_FILE + ".tmp"
+
+    with open(temp_file, "w", encoding="utf-8") as file:
+
+        json.dump(
+            output,
+            file,
             indent=4,
             ensure_ascii=False
-        ),
-        encoding="utf-8"
-    )
+        )
 
-    elapsed = time.perf_counter() - start_time
+    Path(temp_file).replace(OUTPUT_FILE)
 
-    print("\n========== FETCH COMPLETED ==========")
+    elapsed = time.time() - start
 
-    print(f"Total channels     : {total}")
-    print(f"Successful         : {len(successful_results)}")
-    print(f"Failed             : {len(failed_results)}")
-    print(f"Time taken         : {elapsed:.2f} seconds")
-    print(f"Output file        : {OUTPUT_FILE}")
-
-    print("======================================")
+    print("\n========== SUMMARY ==========")
+    print("Total channels:", total)
+    print("Successful:", len(successful))
+    print("Failed:", len(failed))
+    print("Time taken:", round(elapsed, 2), "seconds")
+    print("Output:", OUTPUT_FILE)
+    print("=============================")
 
 
 if __name__ == "__main__":
