@@ -37,31 +37,50 @@ HEADERS = {
     ),
 }
 
-STREAM_URL_PATTERN = re.compile(
-    r"https?://[^\s\"'<>\\]+?(?:\.m3u8|\.mpd)(?:\?[^\s\"'<>\\]*)?",
+STREAM_URL_VAR_RE = re.compile(
+    r"""const\s+STREAM_URL\s*=\s*["']([^"']*)["']""",
+    re.IGNORECASE,
+)
+HDNEA_VAR_RE = re.compile(
+    r"""const\s+hdneaToken\s*=\s*["']([^"']*)["']""",
+    re.IGNORECASE,
+)
+FETCH_ERROR_VAR_RE = re.compile(
+    r"""const\s+fetchError\s*=\s*["']([^"']*)["']""",
+    re.IGNORECASE,
+)
+HDNEA_PARAM_RE = re.compile(
+    r"""(__hdnea__=[^&"'\s\\<>]+)""",
     re.IGNORECASE,
 )
 
 
-def resolve_final_url(response: requests.Response, body: str) -> str | None:
-    """Return the final stream/resolved URL containing __hdnea__ if present."""
-    candidates = [resp.url for resp in response.history] + [response.url]
-    for url in candidates:
-        if "__hdnea__" in unquote(url):
-            return url
+def extract_stream_info(body: str) -> tuple[str | None, str | None, str | None]:
+    """Extract (final_url, hdnea_token, page_error) from the player HTML."""
+    stream_match = STREAM_URL_VAR_RE.search(body)
+    hdnea_match = HDNEA_VAR_RE.search(body)
+    err_match = FETCH_ERROR_VAR_RE.search(body)
 
-    for match in STREAM_URL_PATTERN.finditer(body):
-        candidate = match.group(0).replace("\\/", "/")
-        if "__hdnea__" in unquote(candidate):
-            return candidate
+    stream_url = stream_match.group(1).strip() if stream_match else None
+    hdnea_token = hdnea_match.group(1).strip() if hdnea_match else None
+    page_error = err_match.group(1).strip() if err_match else None
 
-    for match in STREAM_URL_PATTERN.finditer(body):
-        return match.group(0).replace("\\/", "/")
+    if stream_url:
+        stream_url = stream_url.replace("\\/", "/")
 
-    if response.url and response.url != f"{PLAY_API_URL}?id=":
-        return response.url
+    if not hdnea_token:
+        search_target = unquote(stream_url or body)
+        m = HDNEA_PARAM_RE.search(search_target)
+        if m:
+            token_val = m.group(1)
+            hdnea_token = token_val if token_val.startswith("__hdnea__=") else f"__hdnea__={token_val}"
 
-    return None
+    if stream_url and hdnea_token and "__hdnea__" not in unquote(stream_url):
+        sep = "&" if "?" in stream_url else "?"
+        token_clean = hdnea_token if hdnea_token.startswith("__hdnea__=") else f"__hdnea__={hdnea_token}"
+        stream_url = f"{stream_url}{sep}{token_clean}"
+
+    return stream_url, hdnea_token, page_error
 
 
 def load_channel_entries(url: str) -> list[dict]:
@@ -100,9 +119,11 @@ def main() -> None:
                 allow_redirects=True,
             )
             body = resp.text
-            final_url = resolve_final_url(resp, body)
+            final_url, hdnea_token, page_error = extract_stream_info(body)
 
-            if resp.ok and final_url and "__hdnea__" in unquote(final_url):
+            has_token = bool(hdnea_token) or (bool(final_url) and "__hdnea__" in unquote(final_url))
+
+            if resp.ok and final_url and has_token:
                 successful_results.append({
                     "channel_id": channel_id,
                     "channel_name": channel_name,
@@ -111,12 +132,16 @@ def main() -> None:
                     "final_url": final_url,
                 })
             else:
+                reason = (
+                    page_error
+                    or ("Empty STREAM_URL in player HTML" if not final_url else "Missing __hdnea__ token in player HTML")
+                )
                 failed_results.append({
                     "channel_id": channel_id,
                     "channel_name": channel_name,
                     "status": "failed",
                     "http_code": resp.status_code,
-                    "error": "Missing __hdnea__ token in response or redirect chain",
+                    "error": reason,
                     "final_url": final_url,
                 })
 
