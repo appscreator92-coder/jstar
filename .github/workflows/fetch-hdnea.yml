@@ -1,20 +1,29 @@
+
 name: Fetch __hdnea__ Tokens
 
 on:
   schedule:
     - cron: "0 */3 * * *"
+
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: fetch-hdnea-tokens
+  cancel-in-progress: false
+
 jobs:
   fetch-tokens:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,17 +35,47 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests brotli zstandard
 
-      - name: Run token fetcher script
-        run: python fetch_hdnea.py
+      - name: Run HDNEA fetcher
+        run: python -u fetch_hdnea.py
 
-      - name: Commit and push updated tokens
+      - name: Validate JSON
+        run: |
+          python -m json.tool hdnea_tokens.json > /dev/null
+          echo "JSON validation successful"
+
+      - name: Show statistics
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          with open("hdnea_tokens.json", encoding="utf-8") as f:
+              data = json.load(f)
+
+          summary = (
+              "## HDNEA Token Results\n\n"
+              f"- Total: {data['total_channels']}\n"
+              f"- Successful: {data['successful_channels']}\n"
+              f"- Failed: {data['failed_channels']}\n"
+          )
+
+          print(summary)
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          PY
+
+      - name: Commit and push updated JSON
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add hdnea_tokens.json
-          if git diff --staged --quiet; then
-            echo "No changes to hdnea_tokens.json"
+
+          if git diff --cached --quiet; then
+            echo "No changes detected"
           else
-            git commit -m "Update __hdnea__ tokens [skip ci]"
-            git push
+            git commit -m "Update HDNEA tokens [skip ci]"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
