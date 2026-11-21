@@ -35,7 +35,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests brotli zstandard
 
-      - name: Run token fetcher
+      - name: Run HDNEA fetcher
         run: python -u fetch_hdnea.py
 
       - name: Validate JSON
@@ -43,7 +43,7 @@ jobs:
           python -m json.tool hdnea_tokens.json > /dev/null
           echo "JSON validation successful"
 
-      - name: Commit and push updated JSON
+      - name: Commit updated JSON
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
