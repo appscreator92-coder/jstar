@@ -1,13 +1,13 @@
 
 import json
 import re
-import time
 import ast
+import time
 import threading
+
 from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse, parse_qs
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -25,7 +25,7 @@ SOURCE_URL = (
 
 API_URL = "https://b4uplay.com/api/vizha/play.php"
 
-OUTPUT_FILE = "hdnea_tokens.json"
+OUTPUT_FILE = Path("hdnea_tokens.json")
 
 MAX_WORKERS = 12
 TIMEOUT = 30
@@ -35,27 +35,53 @@ thread_local = threading.local()
 
 
 # =========================================================
-# HEADERS
+# BROWSER REQUEST HEADERS
 # =========================================================
 
 HEADERS = {
-    "User-Agent": (
+    "accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,"
+        "application/signed-exchange;v=b3;q=0.7"
+    ),
+
+    "accept-encoding": "gzip, deflate, br, zstd",
+
+    "accept-language": "en-US,en;q=0.9",
+
+    "referer": "https://bhoomtv.me/",
+
+    "sec-ch-ua": (
+        '"Chromium";v="158", "Not.A/Brand";v="24", '
+        '"Google Chrome";v="158"'
+    ),
+
+    "sec-ch-ua-mobile": "?0",
+
+    "sec-ch-ua-platform": '"Windows"',
+
+    "sec-fetch-dest": "iframe",
+
+    "sec-fetch-mode": "navigate",
+
+    "sec-fetch-site": "cross-site",
+
+    "sec-fetch-storage-access": "active",
+
+    "sec-fetch-user": "?1",
+
+    "upgrade-insecure-requests": "1",
+
+    "user-agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/158.0.0.0 Safari/537.36"
     ),
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/avif,image/webp,*/*;q=0.8"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://bhoomtv.me/",
-    "Upgrade-Insecure-Requests": "1",
 }
 
 
 # =========================================================
-# REGEX
+# JAVASCRIPT VARIABLE PATTERNS
 # =========================================================
 
 JS_STRING = r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')"""
@@ -80,7 +106,7 @@ ERROR_PATTERN = re.compile(
 
 
 # =========================================================
-# THREAD SESSION
+# THREAD-LOCAL REQUEST SESSION
 # =========================================================
 
 def get_session():
@@ -95,8 +121,11 @@ def get_session():
             read=MAX_RETRIES,
             status=MAX_RETRIES,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+            status_forcelist=[
+                429, 500, 502, 503, 504
+            ],
             allowed_methods=["GET"],
+            respect_retry_after_header=True,
         )
 
         adapter = HTTPAdapter(
@@ -122,7 +151,8 @@ def decode_js_string(value):
     try:
         return ast.literal_eval(value)
 
-    except Exception:
+    except (ValueError, SyntaxError):
+
         return value[1:-1]
 
 
@@ -137,39 +167,69 @@ def extract_variable(pattern, html):
     if not match:
         return ""
 
-    return decode_js_string(match.group(1)).strip()
+    return decode_js_string(
+        match.group(1)
+    ).strip()
 
 
 # =========================================================
-# EXTRACT STREAM AND TOKEN
+# DETECT GEO RESTRICTION
+# =========================================================
+
+def is_geo_restricted(html):
+
+    text = html.lower()
+
+    indicators = [
+        "geo restricted",
+        "geographical restriction",
+        "geographic restriction",
+        "not available in your region",
+        "not available in your country",
+        "country is not supported",
+    ]
+
+    return any(
+        indicator in text
+        for indicator in indicators
+    )
+
+
+# =========================================================
+# EXTRACT STREAM URL AND TOKEN
 # =========================================================
 
 def extract_stream(html):
 
     stream_url = extract_variable(
-        STREAM_PATTERN, html
+        STREAM_PATTERN,
+        html
     )
 
-    hdnea_token = extract_variable(
-        TOKEN_PATTERN, html
+    token = extract_variable(
+        TOKEN_PATTERN,
+        html
     )
 
     fetch_error = extract_variable(
-        ERROR_PATTERN, html
+        ERROR_PATTERN,
+        html
     )
 
     stream_url = stream_url.replace("\\/", "/")
 
-    # If the URL already has the token, preserve it.
+    token = token.replace("\\/", "/")
+
+    # The supplied player HTML normally already has
+    # the complete tokenized STREAM_URL.
 
     if stream_url and "__hdnea__=" in stream_url:
-        return stream_url, hdnea_token, fetch_error
 
-    # Otherwise append the separately extracted token.
+        return stream_url, token, fetch_error
 
-    if stream_url and hdnea_token:
+    # If token is separate, append it to the stream URL.
 
-        token = hdnea_token
+    if stream_url and token:
 
         if not token.startswith("__hdnea__="):
             token = "__hdnea__=" + token
@@ -178,13 +238,7 @@ def extract_stream(html):
 
         stream_url += separator + token
 
-    # Last fallback: obtain token from URL query.
-
-    if stream_url and "__hdnea__=" in stream_url:
-
-        return stream_url, hdnea_token, fetch_error
-
-    return stream_url, hdnea_token, fetch_error
+    return stream_url, token, fetch_error
 
 
 # =========================================================
@@ -193,12 +247,14 @@ def extract_stream(html):
 
 def load_channels():
 
-    print("Downloading channel JSON...")
+    print("Downloading jnew7.json...")
 
     response = requests.get(
         SOURCE_URL,
-        timeout=TIMEOUT,
-        headers={"User-Agent": HEADERS["User-Agent"]}
+        headers={
+            "User-Agent": HEADERS["user-agent"]
+        },
+        timeout=TIMEOUT
     )
 
     response.raise_for_status()
@@ -206,48 +262,63 @@ def load_channels():
     data = response.json()
 
     if isinstance(data, list):
+
         channels = data
 
     elif isinstance(data, dict):
 
         channels = None
 
-        for key in ("channels", "data", "items", "list"):
+        for key in (
+            "channels",
+            "data",
+            "items",
+            "list"
+        ):
 
             if isinstance(data.get(key), list):
+
                 channels = data[key]
                 break
 
         if channels is None:
+
             raise ValueError(
-                "Could not find channel list in jnew7.json"
+                "Channel list not found in jnew7.json"
             )
 
     else:
-        raise ValueError("Invalid JSON format")
 
-    valid = []
+        raise ValueError(
+            "Unexpected JSON structure"
+        )
 
-    for channel in channels:
+    valid_channels = []
 
-        if not isinstance(channel, dict):
+    for item in channels:
+
+        if not isinstance(item, dict):
             continue
 
-        channel_id = str(channel.get("id", "")).strip()
+        channel_id = str(
+            item.get("id", "")
+        ).strip()
 
         if not channel_id:
             continue
 
-        valid.append({
+        channel_name = str(
+            item.get("name", channel_id)
+        ).strip()
+
+        valid_channels.append({
             "id": channel_id,
-            "name": str(
-                channel.get("name", channel_id)
-            ).strip()
+            "name": channel_name
         })
 
-    print("Channels found:", len(valid))
+    print("Total valid channels:", len(valid_channels))
 
-    return valid
+    return valid_channels
 
 
 # =========================================================
@@ -265,66 +336,86 @@ def fetch_channel(index, channel):
 
         response = session.get(
             API_URL,
-            params={"id": channel_id},
+            params={
+                "id": channel_id
+            },
             headers=HEADERS,
             timeout=TIMEOUT,
-            allow_redirects=True,
+            allow_redirects=True
         )
 
         response.raise_for_status()
 
         html = response.text
 
+        # Check for geographic restrictions before parsing.
+
+        if is_geo_restricted(html):
+
+            return index, False, {
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "status": "failed",
+                "http_code": response.status_code,
+                "error": "Geo Restricted: server denied regional access",
+                "final_url": None
+            }
+
         stream_url, token, fetch_error = extract_stream(html)
 
-        # A valid result must contain a complete stream URL
-        # with an HDNEA token.
+        # Validate the extracted stream.
 
-        has_token = (
-            bool(token)
-            or (
-                bool(stream_url)
-                and "__hdnea__=" in stream_url
-            )
-        )
-
-        if stream_url and has_token:
-
-            if "__hdnea__=" not in stream_url:
-                raise ValueError(
-                    "Token was found but URL has no HDNEA parameter"
-                )
+        if (
+            stream_url
+            and "__hdnea__=" in stream_url
+            and stream_url.startswith(("http://", "https://"))
+        ):
 
             return index, True, {
                 "channel_id": channel_id,
                 "channel_name": channel_name,
                 "status": "success",
                 "http_code": response.status_code,
-                "final_url": stream_url,
+                "final_url": stream_url
             }
 
-        # Print diagnostics for the first few failed responses.
+        # Diagnostic output for first three failures.
 
         if index < 3:
 
             print("\n========== RESPONSE DEBUG ==========")
+
             print("Channel:", channel_name)
             print("ID:", channel_id)
             print("HTTP:", response.status_code)
+
             print(
                 "Content-Type:",
                 response.headers.get("Content-Type")
             )
-            print("Response length:", len(html))
-            print("Final response URL:", response.url)
+
+            print(
+                "Response length:",
+                len(html)
+            )
+
+            print(
+                "Response URL:",
+                response.url
+            )
+
             print("Response preview:")
             print(html[:1000])
+
             print("====================================\n")
 
-        error = fetch_error or (
-            "STREAM_URL not found in API response"
-            if not stream_url
-            else "HDNEA token not found"
+        error = (
+            fetch_error
+            or (
+                "STREAM_URL not found"
+                if not stream_url
+                else "HDNEA token not found in stream URL"
+            )
         )
 
         return index, False, {
@@ -333,7 +424,17 @@ def fetch_channel(index, channel):
             "status": "failed",
             "http_code": response.status_code,
             "error": error,
-            "final_url": stream_url or None,
+            "final_url": stream_url or None
+        }
+
+    except requests.RequestException as exc:
+
+        return index, False, {
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "status": "failed",
+            "http_code": None,
+            "error": str(exc)
         }
 
     except Exception as exc:
@@ -343,7 +444,7 @@ def fetch_channel(index, channel):
             "channel_name": channel_name,
             "status": "failed",
             "http_code": None,
-            "error": str(exc),
+            "error": str(exc)
         }
 
 
@@ -353,20 +454,17 @@ def fetch_channel(index, channel):
 
 def main():
 
-    start = time.time()
+    start_time = time.time()
 
     channels = load_channels()
 
     total = len(channels)
 
-    successful = []
-    failed = []
-
-    print("\nStarting token extraction...")
-    print("Workers:", MAX_WORKERS)
-    print("Total:", total)
-
     results = []
+
+    print("\nStarting HDNEA extraction...")
+    print("Workers:", MAX_WORKERS)
+    print("Total channels:", total)
 
     with ThreadPoolExecutor(
         max_workers=MAX_WORKERS
@@ -387,7 +485,9 @@ def main():
 
             index, success, result = future.result()
 
-            results.append((index, success, result))
+            results.append(
+                (index, success, result)
+            )
 
             completed += 1
 
@@ -397,34 +497,54 @@ def main():
                 f"{result['status']}"
             )
 
-    # Keep original JSON channel order.
+    # Restore original JSON order.
 
-    results.sort(key=lambda item: item[0])
+    results.sort(
+        key=lambda item: item[0]
+    )
+
+    successful_results = []
+    failed_results = []
 
     for _, success, result in results:
 
         if success:
-            successful.append(result)
+            successful_results.append(result)
+
         else:
-            failed.append(result)
+            failed_results.append(result)
+
+    # Final JSON output.
 
     output = {
+
         "source_url": SOURCE_URL,
+
         "total_channels": total,
-        "successful_channels": len(successful),
-        "failed_channels": len(failed),
+
+        "successful_channels": len(successful_results),
+
+        "failed_channels": len(failed_results),
+
         "timestamp": datetime.now(
             timezone.utc
         ).strftime("%Y-%m-%d %H:%M:%S"),
-        "successful_results": successful,
-        "failed_results": failed,
+
+        "successful_results": successful_results,
+
+        "failed_results": failed_results
+
     }
 
-    # Write JSON atomically.
+    # Save atomically.
 
-    temp_file = OUTPUT_FILE + ".tmp"
+    temp_file = OUTPUT_FILE.with_suffix(".tmp")
 
-    with open(temp_file, "w", encoding="utf-8") as file:
+    with open(
+        temp_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
 
         json.dump(
             output,
@@ -433,16 +553,32 @@ def main():
             ensure_ascii=False
         )
 
-    Path(temp_file).replace(OUTPUT_FILE)
+    temp_file.replace(OUTPUT_FILE)
 
-    elapsed = time.time() - start
+    elapsed = time.time() - start_time
 
     print("\n========== SUMMARY ==========")
+
     print("Total channels:", total)
-    print("Successful:", len(successful))
-    print("Failed:", len(failed))
-    print("Time taken:", round(elapsed, 2), "seconds")
+
+    print(
+        "Successful:",
+        len(successful_results)
+    )
+
+    print(
+        "Failed:",
+        len(failed_results)
+    )
+
+    print(
+        "Time taken:",
+        round(elapsed, 2),
+        "seconds"
+    )
+
     print("Output:", OUTPUT_FILE)
+
     print("=============================")
 
 
