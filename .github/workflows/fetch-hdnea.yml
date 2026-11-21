@@ -4,6 +4,7 @@ name: Fetch HDNEA Tokens
 on:
   schedule:
     - cron: "0 */3 * * *"
+
   workflow_dispatch:
 
 permissions:
@@ -34,13 +35,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Run HDNEA fetcher
+      - name: Run HDNEA extractor
         run: python -u fetch_hdnea.py
 
-      - name: Validate JSON
-        run: python -m json.tool hdnea_tokens.json > /dev/null
+      - name: Validate generated JSON
+        run: |
+          python -m json.tool hdnea_tokens.json > /dev/null
+          echo "JSON validation successful"
 
-      - name: Commit updated JSON
+      - name: Display extraction summary
+        run: |
+          python - <<'PY'
+          import json
+
+          with open("hdnea_tokens.json", encoding="utf-8") as f:
+              data = json.load(f)
+
+          print("Total:", data["total_channels"])
+          print("Successful:", data["successful_channels"])
+          print("Failed:", data["failed_channels"])
+          PY
+
+      - name: Commit and push JSON
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
