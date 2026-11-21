@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -29,7 +30,7 @@ OUTPUT_FILE = Path("hdnea_tokens.json")
 
 MAX_WORKERS = 12
 TIMEOUT = 30
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 
 thread_local = threading.local()
 
@@ -44,40 +45,29 @@ HEADERS = {
         "image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,"
         "application/signed-exchange;v=b3;q=0.7"
     ),
-
     "accept-encoding": "gzip, deflate, br, zstd",
-
     "accept-language": "en-US,en;q=0.9",
-
     "referer": "https://bhoomtv.me/",
-
     "sec-ch-ua": (
         '"Chromium";v="158", "Not.A/Brand";v="24", '
         '"Google Chrome";v="158"'
     ),
-
     "sec-ch-ua-mobile": "?0",
-
     "sec-ch-ua-platform": '"Windows"',
-
     "sec-fetch-dest": "iframe",
-
     "sec-fetch-mode": "navigate",
-
     "sec-fetch-site": "cross-site",
-
-    "sec-fetch-storage-access": "active",
-
     "sec-fetch-user": "?1",
-
     "upgrade-insecure-requests": "1",
-
     "user-agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/158.0.0.0 Safari/537.36"
     ),
 }
+
+# Host, Connection and browser-only storage-access metadata
+# are not manually overridden.
 
 
 # =========================================================
@@ -86,27 +76,35 @@ HEADERS = {
 
 JS_STRING = r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')"""
 
-STREAM_PATTERN = re.compile(
-    r"\b(?:const|let|var)\s+STREAM_URL\s*=\s*"
-    + JS_STRING,
-    re.IGNORECASE | re.DOTALL
-)
+VARIABLE_PATTERNS = {
+    "STREAM_URL": re.compile(
+        r"\b(?:const|let|var)\s+STREAM_URL\s*=\s*"
+        + JS_STRING,
+        re.IGNORECASE | re.DOTALL
+    ),
 
-TOKEN_PATTERN = re.compile(
-    r"\b(?:const|let|var)\s+hdneaToken\s*=\s*"
-    + JS_STRING,
-    re.IGNORECASE | re.DOTALL
-)
+    "hdneaToken": re.compile(
+        r"\b(?:const|let|var)\s+hdneaToken\s*=\s*"
+        + JS_STRING,
+        re.IGNORECASE | re.DOTALL
+    ),
 
-ERROR_PATTERN = re.compile(
-    r"\b(?:const|let|var)\s+fetchError\s*=\s*"
-    + JS_STRING,
-    re.IGNORECASE | re.DOTALL
-)
+    "fetchError": re.compile(
+        r"\b(?:const|let|var)\s+fetchError\s*=\s*"
+        + JS_STRING,
+        re.IGNORECASE | re.DOTALL
+    ),
+
+    "IS_GEO_BLOCKED": re.compile(
+        r"\b(?:const|let|var)\s+IS_GEO_BLOCKED\s*=\s*"
+        r"(true|false)\b",
+        re.IGNORECASE
+    ),
+}
 
 
 # =========================================================
-# THREAD-LOCAL REQUEST SESSION
+# THREAD-LOCAL SESSION
 # =========================================================
 
 def get_session():
@@ -143,7 +141,7 @@ def get_session():
 
 
 # =========================================================
-# DECODE JAVASCRIPT STRING
+# DECODE JAVASCRIPT STRINGS
 # =========================================================
 
 def decode_js_string(value):
@@ -152,20 +150,24 @@ def decode_js_string(value):
         return ast.literal_eval(value)
 
     except (ValueError, SyntaxError):
-
         return value[1:-1]
 
 
 # =========================================================
-# EXTRACT JAVASCRIPT VARIABLE
+# EXTRACT JAVASCRIPT VARIABLES
 # =========================================================
 
-def extract_variable(pattern, html):
+def extract_variable(name, html):
+
+    pattern = VARIABLE_PATTERNS[name]
 
     match = pattern.search(html)
 
     if not match:
-        return ""
+        return None
+
+    if name == "IS_GEO_BLOCKED":
+        return match.group(1).lower() == "true"
 
     return decode_js_string(
         match.group(1)
@@ -173,76 +175,76 @@ def extract_variable(pattern, html):
 
 
 # =========================================================
-# DETECT GEO RESTRICTION
+# PARSE PLAYER RESPONSE
 # =========================================================
 
-def is_geo_restricted(html):
+def parse_player_response(html):
 
-    text = html.lower()
-
-    indicators = [
-        "geo restricted",
-        "geographical restriction",
-        "geographic restriction",
-        "not available in your region",
-        "not available in your country",
-        "country is not supported",
-    ]
-
-    return any(
-        indicator in text
-        for indicator in indicators
+    geo_blocked = extract_variable(
+        "IS_GEO_BLOCKED", html
     )
-
-
-# =========================================================
-# EXTRACT STREAM URL AND TOKEN
-# =========================================================
-
-def extract_stream(html):
 
     stream_url = extract_variable(
-        STREAM_PATTERN,
-        html
+        "STREAM_URL", html
     )
 
-    token = extract_variable(
-        TOKEN_PATTERN,
-        html
+    hdnea_token = extract_variable(
+        "hdneaToken", html
     )
 
     fetch_error = extract_variable(
-        ERROR_PATTERN,
-        html
+        "fetchError", html
     )
 
-    stream_url = stream_url.replace("\\/", "/")
+    if stream_url:
+        stream_url = stream_url.replace("\\/", "/")
 
-    token = token.replace("\\/", "/")
+    if hdnea_token:
+        hdnea_token = hdnea_token.replace("\\/", "/")
 
-    # The supplied player HTML normally already has
-    # the complete tokenized STREAM_URL.
+    return {
+        "geo_blocked": geo_blocked,
+        "stream_url": stream_url or "",
+        "hdnea_token": hdnea_token or "",
+        "fetch_error": fetch_error or "",
+    }
 
-    if stream_url and "__hdnea__=" in stream_url:
 
-        return stream_url, token, fetch_error
+# =========================================================
+# VALIDATE AND COMPLETE STREAM URL
+# =========================================================
 
-    # If token is separate, append it to the stream URL.
+def build_final_url(stream_url, token):
 
-    if stream_url and token:
+    if not stream_url:
+        return None
+
+    if not stream_url.startswith(("https://", "http://")):
+        return None
+
+    # Preserve the original URL if it already contains
+    # the HDNEA parameter.
+
+    if "__hdnea__=" in stream_url:
+        return stream_url
+
+    # Append the separately supplied token only when
+    # the URL does not already contain it.
+
+    if token:
 
         if not token.startswith("__hdnea__="):
             token = "__hdnea__=" + token
 
         separator = "&" if "?" in stream_url else "?"
 
-        stream_url += separator + token
+        return stream_url + separator + token
 
-    return stream_url, token, fetch_error
+    return None
 
 
 # =========================================================
-# LOAD CHANNELS FROM jnew7.json
+# LOAD CHANNELS
 # =========================================================
 
 def load_channels():
@@ -269,22 +271,15 @@ def load_channels():
 
         channels = None
 
-        for key in (
-            "channels",
-            "data",
-            "items",
-            "list"
-        ):
+        for key in ("channels", "data", "items", "list"):
 
             if isinstance(data.get(key), list):
-
                 channels = data[key]
                 break
 
         if channels is None:
-
             raise ValueError(
-                "Channel list not found in jnew7.json"
+                "Channel array not found in JSON"
             )
 
     else:
@@ -316,7 +311,7 @@ def load_channels():
             "name": channel_name
         })
 
-    print("Total valid channels:", len(valid_channels))
+    print("Total channels:", len(valid_channels))
 
     return valid_channels
 
@@ -336,95 +331,126 @@ def fetch_channel(index, channel):
 
         response = session.get(
             API_URL,
-            params={
-                "id": channel_id
-            },
+            params={"id": channel_id},
             headers=HEADERS,
             timeout=TIMEOUT,
             allow_redirects=True
         )
 
-        response.raise_for_status()
-
+        http_code = response.status_code
         html = response.text
 
-        # Check for geographic restrictions before parsing.
+        # Detect geographic restriction pages.
 
-        if is_geo_restricted(html):
+        page_title = re.search(
+            r"<title[^>]*>(.*?)</title>",
+            html,
+            re.IGNORECASE | re.DOTALL
+        )
+
+        title = (
+            page_title.group(1).strip()
+            if page_title else ""
+        )
+
+        if (
+            "geo restricted" in title.lower()
+            or "geo restricted" in html.lower()
+        ):
 
             return index, False, {
                 "channel_id": channel_id,
                 "channel_name": channel_name,
                 "status": "failed",
-                "http_code": response.status_code,
-                "error": "Geo Restricted: server denied regional access",
+                "http_code": http_code,
+                "error": "Geo Restricted response",
                 "final_url": None
             }
 
-        stream_url, token, fetch_error = extract_stream(html)
+        response.raise_for_status()
 
-        # Validate the extracted stream.
+        # Parse the actual player HTML.
 
-        if (
-            stream_url
-            and "__hdnea__=" in stream_url
-            and stream_url.startswith(("http://", "https://"))
-        ):
+        player = parse_player_response(html)
+
+        # Check explicit geo flag.
+
+        if player["geo_blocked"] is True:
+
+            return index, False, {
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "status": "failed",
+                "http_code": http_code,
+                "error": "IS_GEO_BLOCKED is true",
+                "final_url": None
+            }
+
+        # Extract complete tokenized URL.
+
+        final_url = build_final_url(
+            player["stream_url"],
+            player["hdnea_token"]
+        )
+
+        if final_url:
 
             return index, True, {
                 "channel_id": channel_id,
                 "channel_name": channel_name,
                 "status": "success",
-                "http_code": response.status_code,
-                "final_url": stream_url
+                "http_code": http_code,
+                "final_url": final_url
             }
 
-        # Diagnostic output for first three failures.
+        # Classify parsing failures.
+
+        if player["fetch_error"]:
+
+            error = player["fetch_error"]
+
+        elif player["geo_blocked"] is None:
+
+            error = "IS_GEO_BLOCKED variable not found"
+
+        elif not player["stream_url"]:
+
+            error = "STREAM_URL not found"
+
+        elif not player["hdnea_token"]:
+
+            error = "HDNEA token not found"
+
+        else:
+
+            error = "Invalid stream URL"
+
+        # Print diagnostics for the first three failures.
 
         if index < 3:
 
-            print("\n========== RESPONSE DEBUG ==========")
-
+            print("\n========== DEBUG ==========")
             print("Channel:", channel_name)
             print("ID:", channel_id)
-            print("HTTP:", response.status_code)
-
-            print(
-                "Content-Type:",
-                response.headers.get("Content-Type")
-            )
-
-            print(
-                "Response length:",
-                len(html)
-            )
-
-            print(
-                "Response URL:",
-                response.url
-            )
-
+            print("HTTP:", http_code)
+            print("Title:", title or "Not found")
+            print("Content-Type:", response.headers.get("Content-Type"))
+            print("Response length:", len(html))
+            print("Geo flag:", player["geo_blocked"])
+            print("STREAM_URL found:", bool(player["stream_url"]))
+            print("Token found:", bool(player["hdnea_token"]))
+            print("fetchError:", player["fetch_error"])
             print("Response preview:")
-            print(html[:1000])
-
-            print("====================================\n")
-
-        error = (
-            fetch_error
-            or (
-                "STREAM_URL not found"
-                if not stream_url
-                else "HDNEA token not found in stream URL"
-            )
-        )
+            print(html[:1200])
+            print("===========================\n")
 
         return index, False, {
             "channel_id": channel_id,
             "channel_name": channel_name,
             "status": "failed",
-            "http_code": response.status_code,
+            "http_code": http_code,
             "error": error,
-            "final_url": stream_url or None
+            "final_url": None
         }
 
     except requests.RequestException as exc:
@@ -434,7 +460,8 @@ def fetch_channel(index, channel):
             "channel_name": channel_name,
             "status": "failed",
             "http_code": None,
-            "error": str(exc)
+            "error": str(exc),
+            "final_url": None
         }
 
     except Exception as exc:
@@ -444,7 +471,8 @@ def fetch_channel(index, channel):
             "channel_name": channel_name,
             "status": "failed",
             "http_code": None,
-            "error": str(exc)
+            "error": str(exc),
+            "final_url": None
         }
 
 
@@ -463,8 +491,9 @@ def main():
     results = []
 
     print("\nStarting HDNEA extraction...")
+    print("API:", API_URL)
     print("Workers:", MAX_WORKERS)
-    print("Total channels:", total)
+    print("Total:", total)
 
     with ThreadPoolExecutor(
         max_workers=MAX_WORKERS
@@ -483,60 +512,49 @@ def main():
 
         for future in as_completed(futures):
 
-            index, success, result = future.result()
+            index, success, record = future.result()
 
             results.append(
-                (index, success, result)
+                (index, success, record)
             )
 
             completed += 1
 
             print(
                 f"[{completed}/{total}] "
-                f"{result['channel_name']} - "
-                f"{result['status']}"
+                f"{record['channel_name']} - "
+                f"{record['status']}"
             )
 
-    # Restore original JSON order.
+    # Preserve original channel order.
 
-    results.sort(
-        key=lambda item: item[0]
-    )
+    results.sort(key=lambda item: item[0])
 
     successful_results = []
     failed_results = []
 
-    for _, success, result in results:
+    for _, success, record in results:
 
         if success:
-            successful_results.append(result)
-
+            successful_results.append(record)
         else:
-            failed_results.append(result)
+            failed_results.append(record)
 
-    # Final JSON output.
+    # Required JSON structure.
 
     output = {
-
         "source_url": SOURCE_URL,
-
         "total_channels": total,
-
         "successful_channels": len(successful_results),
-
         "failed_channels": len(failed_results),
-
         "timestamp": datetime.now(
             timezone.utc
         ).strftime("%Y-%m-%d %H:%M:%S"),
-
         "successful_results": successful_results,
-
         "failed_results": failed_results
-
     }
 
-    # Save atomically.
+    # Atomic JSON write.
 
     temp_file = OUTPUT_FILE.with_suffix(".tmp")
 
@@ -557,29 +575,13 @@ def main():
 
     elapsed = time.time() - start_time
 
-    print("\n========== SUMMARY ==========")
-
+    print("\n========== FINAL SUMMARY ==========")
     print("Total channels:", total)
-
-    print(
-        "Successful:",
-        len(successful_results)
-    )
-
-    print(
-        "Failed:",
-        len(failed_results)
-    )
-
-    print(
-        "Time taken:",
-        round(elapsed, 2),
-        "seconds"
-    )
-
-    print("Output:", OUTPUT_FILE)
-
-    print("=============================")
+    print("Successful:", len(successful_results))
+    print("Failed:", len(failed_results))
+    print("Time taken:", round(elapsed, 2), "seconds")
+    print("Output file:", OUTPUT_FILE)
+    print("===================================")
 
 
 if __name__ == "__main__":
