@@ -8,7 +8,6 @@ import threading
 from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -28,24 +27,26 @@ API_URL = "https://b4uplay.com/api/vizha/play.php"
 
 OUTPUT_FILE = Path("hdnea_tokens.json")
 
-MAX_WORKERS = 12
+MAX_WORKERS = 8
 TIMEOUT = 30
 MAX_RETRIES = 2
 
-thread_local = threading.local()
-
 
 # =========================================================
-# BROWSER REQUEST HEADERS
+# REQUEST HEADERS
+# IMPORTANT: Define globally before any function uses them.
 # =========================================================
 
-headers = {
+HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/158.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;"
+        "q=0.9,image/avif,image/webp,*/*;q=0.8"
+    ),
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://bhoomtv.me/",
     "Origin": "https://bhoomtv.me",
@@ -57,8 +58,43 @@ headers = {
     "Pragma": "no-cache",
 }
 
-# Host, Connection and browser-only storage-access metadata
-# are not manually overridden.
+
+# =========================================================
+# THREAD-LOCAL SESSION
+# =========================================================
+
+thread_local = threading.local()
+
+
+def get_session():
+
+    if not hasattr(thread_local, "session"):
+
+        session = requests.Session()
+
+        retry = Retry(
+            total=MAX_RETRIES,
+            connect=MAX_RETRIES,
+            read=MAX_RETRIES,
+            status=MAX_RETRIES,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+            respect_retry_after_header=True,
+        )
+
+        adapter = HTTPAdapter(
+            max_retries=retry,
+            pool_connections=MAX_WORKERS,
+            pool_maxsize=MAX_WORKERS,
+        )
+
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+
+        thread_local.session = session
+
+    return thread_local.session
 
 
 # =========================================================
@@ -67,7 +103,7 @@ headers = {
 
 JS_STRING = r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')"""
 
-VARIABLE_PATTERNS = {
+PATTERNS = {
     "STREAM_URL": re.compile(
         r"\b(?:const|let|var)\s+STREAM_URL\s*=\s*"
         + JS_STRING,
@@ -95,44 +131,7 @@ VARIABLE_PATTERNS = {
 
 
 # =========================================================
-# THREAD-LOCAL SESSION
-# =========================================================
-
-def get_session():
-
-    if not hasattr(thread_local, "session"):
-
-        session = requests.Session()
-
-        retry = Retry(
-            total=MAX_RETRIES,
-            connect=MAX_RETRIES,
-            read=MAX_RETRIES,
-            status=MAX_RETRIES,
-            backoff_factor=1,
-            status_forcelist=[
-                429, 500, 502, 503, 504
-            ],
-            allowed_methods=["GET"],
-            respect_retry_after_header=True,
-        )
-
-        adapter = HTTPAdapter(
-            max_retries=retry,
-            pool_connections=MAX_WORKERS,
-            pool_maxsize=MAX_WORKERS,
-        )
-
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-
-        thread_local.session = session
-
-    return thread_local.session
-
-
-# =========================================================
-# DECODE JAVASCRIPT STRINGS
+# JAVASCRIPT STRING DECODER
 # =========================================================
 
 def decode_js_string(value):
@@ -145,14 +144,12 @@ def decode_js_string(value):
 
 
 # =========================================================
-# EXTRACT JAVASCRIPT VARIABLES
+# EXTRACT VARIABLE
 # =========================================================
 
 def extract_variable(name, html):
 
-    pattern = VARIABLE_PATTERNS[name]
-
-    match = pattern.search(html)
+    match = PATTERNS[name].search(html)
 
     if not match:
         return None
@@ -160,32 +157,21 @@ def extract_variable(name, html):
     if name == "IS_GEO_BLOCKED":
         return match.group(1).lower() == "true"
 
-    return decode_js_string(
-        match.group(1)
-    ).strip()
+    value = decode_js_string(match.group(1))
+
+    return value.strip() if isinstance(value, str) else ""
 
 
 # =========================================================
-# PARSE PLAYER RESPONSE
+# PARSE PLAYER HTML
 # =========================================================
 
 def parse_player_response(html):
 
-    geo_blocked = extract_variable(
-        "IS_GEO_BLOCKED", html
-    )
-
-    stream_url = extract_variable(
-        "STREAM_URL", html
-    )
-
-    hdnea_token = extract_variable(
-        "hdneaToken", html
-    )
-
-    fetch_error = extract_variable(
-        "fetchError", html
-    )
+    stream_url = extract_variable("STREAM_URL", html)
+    hdnea_token = extract_variable("hdneaToken", html)
+    fetch_error = extract_variable("fetchError", html)
+    geo_blocked = extract_variable("IS_GEO_BLOCKED", html)
 
     if stream_url:
         stream_url = stream_url.replace("\\/", "/")
@@ -194,15 +180,57 @@ def parse_player_response(html):
         hdnea_token = hdnea_token.replace("\\/", "/")
 
     return {
-        "geo_blocked": geo_blocked,
         "stream_url": stream_url or "",
         "hdnea_token": hdnea_token or "",
         "fetch_error": fetch_error or "",
+        "geo_blocked": geo_blocked,
     }
 
 
 # =========================================================
-# VALIDATE AND COMPLETE STREAM URL
+# DETECT CLOUDFLARE BLOCK PAGE
+# =========================================================
+
+def detect_cloudflare_block(response):
+
+    html = response.text or ""
+    lower_html = html.lower()
+
+    title_match = re.search(
+        r"<title[^>]*>(.*?)</title>",
+        html,
+        re.IGNORECASE | re.DOTALL
+    )
+
+    title = (
+        re.sub(r"\s+", " ", title_match.group(1)).strip()
+        if title_match else ""
+    )
+
+    indicators = [
+        "sorry, you have been blocked",
+        "you have been blocked",
+        "attention required",
+        "why have i been blocked",
+        "performance & security by cloudflare",
+        "cf-chl-",
+    ]
+
+    is_blocked = (
+        any(item in lower_html for item in indicators)
+        or "cloudflare" in title.lower()
+        and response.status_code in (403, 429, 503)
+    )
+
+    return {
+        "blocked": is_blocked,
+        "title": title,
+        "ray_id": response.headers.get("CF-RAY", ""),
+    }
+
+
+# =========================================================
+# BUILD FINAL STREAM URL
 # =========================================================
 
 def build_final_url(stream_url, token):
@@ -213,29 +241,26 @@ def build_final_url(stream_url, token):
     if not stream_url.startswith(("https://", "http://")):
         return None
 
-    # Preserve the original URL if it already contains
-    # the HDNEA parameter.
+    # The stream URL may already contain its token.
 
     if "__hdnea__=" in stream_url:
         return stream_url
 
-    # Append the separately supplied token only when
-    # the URL does not already contain it.
+    if not token:
+        return None
 
-    if token:
+    # Add parameter only if it is not already present.
 
-        if not token.startswith("__hdnea__="):
-            token = "__hdnea__=" + token
+    if not token.startswith("__hdnea__="):
+        token = "__hdnea__=" + token
 
-        separator = "&" if "?" in stream_url else "?"
+    separator = "&" if "?" in stream_url else "?"
 
-        return stream_url + separator + token
-
-    return None
+    return stream_url + separator + token
 
 
 # =========================================================
-# LOAD CHANNELS
+# LOAD CHANNEL JSON
 # =========================================================
 
 def load_channels():
@@ -245,7 +270,8 @@ def load_channels():
     response = requests.get(
         SOURCE_URL,
         headers={
-            "User-Agent": HEADERS["user-agent"]
+            "User-Agent": HEADERS["User-Agent"],
+            "Accept": "application/json",
         },
         timeout=TIMEOUT
     )
@@ -270,13 +296,13 @@ def load_channels():
 
         if channels is None:
             raise ValueError(
-                "Channel array not found in JSON"
+                "Channel array not found in source JSON"
             )
 
     else:
 
         raise ValueError(
-            "Unexpected JSON structure"
+            "Unexpected source JSON structure"
         )
 
     valid_channels = []
@@ -299,7 +325,7 @@ def load_channels():
 
         valid_channels.append({
             "id": channel_id,
-            "name": channel_name
+            "name": channel_name,
         })
 
     print("Total channels:", len(valid_channels))
@@ -325,46 +351,41 @@ def fetch_channel(index, channel):
             params={"id": channel_id},
             headers=HEADERS,
             timeout=TIMEOUT,
-            allow_redirects=True
+            allow_redirects=True,
         )
 
         http_code = response.status_code
-        html = response.text
+        html = response.text or ""
 
-        # Detect geographic restriction pages.
+        # Check Cloudflare response first.
 
-        page_title = re.search(
-            r"<title[^>]*>(.*?)</title>",
-            html,
-            re.IGNORECASE | re.DOTALL
-        )
+        cloudflare = detect_cloudflare_block(response)
 
-        title = (
-            page_title.group(1).strip()
-            if page_title else ""
-        )
+        if cloudflare["blocked"]:
 
-        if (
-            "geo restricted" in title.lower()
-            or "geo restricted" in html.lower()
-        ):
+            error = "Cloudflare blocked the request"
+
+            if cloudflare["ray_id"]:
+                error += " (Ray ID: " + cloudflare["ray_id"] + ")"
 
             return index, False, {
                 "channel_id": channel_id,
                 "channel_name": channel_name,
                 "status": "failed",
                 "http_code": http_code,
-                "error": "Geo Restricted response",
-                "final_url": None
+                "error": error,
+                "final_url": None,
             }
+
+        # Check HTTP status.
 
         response.raise_for_status()
 
-        # Parse the actual player HTML.
+        # Parse player variables.
 
         player = parse_player_response(html)
 
-        # Check explicit geo flag.
+        # Explicit geo restriction.
 
         if player["geo_blocked"] is True:
 
@@ -374,10 +395,10 @@ def fetch_channel(index, channel):
                 "status": "failed",
                 "http_code": http_code,
                 "error": "IS_GEO_BLOCKED is true",
-                "final_url": None
+                "final_url": None,
             }
 
-        # Extract complete tokenized URL.
+        # Extract URL and token.
 
         final_url = build_final_url(
             player["stream_url"],
@@ -391,24 +412,23 @@ def fetch_channel(index, channel):
                 "channel_name": channel_name,
                 "status": "success",
                 "http_code": http_code,
-                "final_url": final_url
+                "final_url": final_url,
             }
 
-        # Classify parsing failures.
+        # Determine actual parsing failure.
 
         if player["fetch_error"]:
 
             error = player["fetch_error"]
 
-        elif player["geo_blocked"] is None:
-
-            error = "IS_GEO_BLOCKED variable not found"
-
         elif not player["stream_url"]:
 
             error = "STREAM_URL not found"
 
-        elif not player["hdnea_token"]:
+        elif (
+            not player["hdnea_token"]
+            and "__hdnea__=" not in player["stream_url"]
+        ):
 
             error = "HDNEA token not found"
 
@@ -416,16 +436,18 @@ def fetch_channel(index, channel):
 
             error = "Invalid stream URL"
 
-        # Print diagnostics for the first three failures.
+        # Diagnostic output for first three failures.
 
         if index < 3:
 
-            print("\n========== DEBUG ==========")
+            print("\n========== RESPONSE DEBUG ==========")
             print("Channel:", channel_name)
             print("ID:", channel_id)
             print("HTTP:", http_code)
-            print("Title:", title or "Not found")
+            print("Final response URL:", response.url)
             print("Content-Type:", response.headers.get("Content-Type"))
+            print("Cloudflare Ray:", cloudflare["ray_id"])
+            print("Page title:", cloudflare["title"])
             print("Response length:", len(html))
             print("Geo flag:", player["geo_blocked"])
             print("STREAM_URL found:", bool(player["stream_url"]))
@@ -433,7 +455,7 @@ def fetch_channel(index, channel):
             print("fetchError:", player["fetch_error"])
             print("Response preview:")
             print(html[:1200])
-            print("===========================\n")
+            print("====================================\n")
 
         return index, False, {
             "channel_id": channel_id,
@@ -441,7 +463,23 @@ def fetch_channel(index, channel):
             "status": "failed",
             "http_code": http_code,
             "error": error,
-            "final_url": None
+            "final_url": None,
+        }
+
+    except requests.HTTPError as exc:
+
+        status = (
+            exc.response.status_code
+            if exc.response is not None else None
+        )
+
+        return index, False, {
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "status": "failed",
+            "http_code": status,
+            "error": str(exc),
+            "final_url": None,
         }
 
     except requests.RequestException as exc:
@@ -452,7 +490,7 @@ def fetch_channel(index, channel):
             "status": "failed",
             "http_code": None,
             "error": str(exc),
-            "final_url": None
+            "final_url": None,
         }
 
     except Exception as exc:
@@ -463,7 +501,7 @@ def fetch_channel(index, channel):
             "status": "failed",
             "http_code": None,
             "error": str(exc),
-            "final_url": None
+            "final_url": None,
         }
 
 
@@ -484,7 +522,7 @@ def main():
     print("\nStarting HDNEA extraction...")
     print("API:", API_URL)
     print("Workers:", MAX_WORKERS)
-    print("Total:", total)
+    print("Total channels:", total)
 
     with ThreadPoolExecutor(
         max_workers=MAX_WORKERS
@@ -517,7 +555,7 @@ def main():
                 f"{record['status']}"
             )
 
-    # Preserve original channel order.
+    # Restore original channel order.
 
     results.sort(key=lambda item: item[0])
 
@@ -531,7 +569,7 @@ def main():
         else:
             failed_results.append(record)
 
-    # Required JSON structure.
+    # Create output JSON.
 
     output = {
         "source_url": SOURCE_URL,
@@ -542,10 +580,10 @@ def main():
             timezone.utc
         ).strftime("%Y-%m-%d %H:%M:%S"),
         "successful_results": successful_results,
-        "failed_results": failed_results
+        "failed_results": failed_results,
     }
 
-    # Atomic JSON write.
+    # Atomic write.
 
     temp_file = OUTPUT_FILE.with_suffix(".tmp")
 
