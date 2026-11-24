@@ -23,7 +23,7 @@ SOURCE_URL = (
     "appscreator92-coder/index/refs/heads/main/jnew7.json"
 )
 
-API_URL = "https://b4uplay.com/api/vizha/play.php"
+API_URL = "https://master-proxy.wispy-boat-fc77.workers.dev/?url=https://b4uplay.com/api/vizha/play.php"
 
 OUTPUT_FILE = Path("hdnea_tokens.json")
 
