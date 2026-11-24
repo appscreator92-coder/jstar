@@ -1,5 +1,5 @@
 
-name: Fetch Channel Diagnostics
+name: Fetch HDNEA Streams
 
 on:
   workflow_dispatch:
@@ -17,21 +17,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          pip install requests
 
-      - name: Run diagnostics
-        run: python -u fetch_hdnea.py
+      - name: Run HDNEA extractor
+        run: |
+          python -u fetch_hdnea.py
 
       - name: Validate JSON
-        run: python -m json.tool hdnea_tokens.json > /dev/null
+        run: |
+          python -m json.tool hdnea_tokens.json > /dev/null
 
-      - name: Display summary
+      - name: Display extraction summary
         run: |
           python - <<'PY'
           import json
@@ -40,15 +43,19 @@ jobs:
               data = json.load(f)
 
           print("Total:", data["total_channels"])
-
-          for status, count in data["summary"].items():
-              print(status + ":", count)
+          print("Successful:", data["successful_channels"])
+          print("Failed:", data["failed_channels"])
+          print("Timestamp:", data["timestamp"])
           PY
 
       - name: Commit and push JSON
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add hdnea_tokens.json
-          git diff --cached --quiet || git commit -m "Update channel diagnostics"
+
+          git diff --cached --quiet || \
+            git commit -m "Update HDNEA stream data"
+
           git push
