@@ -28,7 +28,7 @@ jobs:
           pip install requests
 
       - name: Run channel script
-        run: python script.py
+        run: python fetch_hdnea.py
 
       - name: Commit updated JSON
         run: |
