@@ -19,7 +19,7 @@ from urllib3.util.retry import Retry
 # =====================================================
 
 SOURCE_URL = (
-    "https://sportlink-tv10.pages.dev/jtvplus3.json"
+    "https://github.com/appscreator92-coder/index/blob/main/jnew7.json"
 )
 
 PROXY_URL = (
