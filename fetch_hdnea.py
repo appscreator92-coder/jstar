@@ -14,7 +14,7 @@ SOURCE_URL = (
     "index/refs/heads/main/jnew7.json"
 )
 
-PROXY_URL = "https://allinborn-proxy.asifansaribr.workers.dev/?url="
+PROXY_URL = "https://allinborn-proxy.asifansaribr.workers.dev/"
 API_URL = "https://b4uplay.com/api/vizha/play.php"
 
 OUTPUT_FILE = "hdnea_tokens.json"
