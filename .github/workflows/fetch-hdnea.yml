@@ -1,5 +1,5 @@
 
-name: Fetch HDNEA Streams
+name: Update Stream Results
 
 on:
   workflow_dispatch:
@@ -10,52 +10,36 @@ permissions:
   contents: write
 
 jobs:
-  fetch-tokens:
+  update:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install requests
 
-      - name: Run HDNEA extractor
-        run: |
-          python -u fetch_hdnea.py
+      - name: Run channel script
+        run: python script.py
 
-      - name: Validate JSON
-        run: |
-          python -m json.tool hdnea_tokens.json > /dev/null
-
-      - name: Display extraction summary
-        run: |
-          python - <<'PY'
-          import json
-
-          with open("hdnea_tokens.json", encoding="utf-8") as f:
-              data = json.load(f)
-
-          print("Total:", data["total_channels"])
-          print("Successful:", data["successful_channels"])
-          print("Failed:", data["failed_channels"])
-          print("Timestamp:", data["timestamp"])
-          PY
-
-      - name: Commit and push JSON
+      - name: Commit updated JSON
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add hdnea_tokens.json
 
-          git diff --cached --quiet || \
-            git commit -m "Update HDNEA stream data"
-
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Update stream results [skip ci]"
+            git push
+          fi
