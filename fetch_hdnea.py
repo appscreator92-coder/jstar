@@ -1,14 +1,12 @@
 
 import json
 import re
-import ast
 import time
 import threading
-
 from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import quote
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -38,6 +36,9 @@ MAX_WORKERS = 4
 TIMEOUT = 30
 MAX_RETRIES = 2
 
+# Additional diagnostic channel
+TEST_CHANNEL_ID = "673"
+
 
 # =========================================================
 # HEADERS
@@ -50,8 +51,8 @@ HEADERS = {
         "Chrome/158.0.0.0 Safari/537.36"
     ),
     "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/avif,image/webp,*/*;q=0.8"
+        "text/html,application/xhtml+xml,"
+        "application/xml;q=0.9,*/*;q=0.8"
     ),
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://bhoomtv.me/",
@@ -61,7 +62,7 @@ HEADERS = {
 
 
 # =========================================================
-# THREAD-LOCAL SESSION
+# THREAD LOCAL SESSION
 # =========================================================
 
 thread_local = threading.local()
@@ -101,15 +102,13 @@ def get_session():
 
 
 # =========================================================
-# BUILD PROXY REQUEST
+# BUILD REQUEST
 # =========================================================
 
 def build_api_request(channel_id):
 
     target_url = (
-        TARGET_API
-        + "?id="
-        + quote(str(channel_id), safe="")
+        TARGET_API + "?id=" + str(channel_id)
     )
 
     return PROXY_BASE, {
@@ -118,43 +117,18 @@ def build_api_request(channel_id):
 
 
 # =========================================================
-# JAVASCRIPT STRING EXTRACTION
+# JAVASCRIPT VARIABLE DIAGNOSTICS
 # =========================================================
 
-JS_STRING = (
-    r'("(?:\\.|[^"\\])*"|'
-    r"'(?:\\.|[^'\\])*')"
-)
-
-
-def decode_js_string(value):
-
-    if not value:
-        return None
-
-    try:
-
-        if value.startswith('"'):
-            result = json.loads(value)
-        else:
-            result = ast.literal_eval(value)
-
-        if isinstance(result, str):
-            return result.strip()
-
-    except (ValueError, SyntaxError, json.JSONDecodeError):
-        pass
-
-    return None
-
-
-def extract_js_string(html, variable):
+def extract_variable(html, variable):
 
     pattern = re.compile(
         r"\b(?:const|let|var)\s+"
         + re.escape(variable)
         + r"\s*=\s*"
-        + JS_STRING,
+        r'("(?:\\.|[^"\\])*"|'
+        r"'(?:\\.|[^'\\])*'|"
+        r"true|false|null)",
         re.IGNORECASE | re.DOTALL
     )
 
@@ -163,66 +137,42 @@ def extract_js_string(html, variable):
     if not match:
         return None
 
-    return decode_js_string(match.group(1))
+    value = match.group(1)
+
+    # Never return actual URL or token values.
+    if variable.lower() in ("stream_url", "hdneatoken"):
+        return "PRESENT"
+
+    return value
 
 
-# =========================================================
-# GEO FLAG
-# =========================================================
+def inspect_player(html):
 
-def extract_geo_flag(html):
-
-    pattern = re.compile(
-        r"\b(?:const|let|var)\s+"
-        r"IS_GEO_BLOCKED\s*=\s*"
-        r"(true|false)\b",
-        re.IGNORECASE
-    )
-
-    match = pattern.search(html)
-
-    if not match:
-        return None
-
-    return match.group(1).lower() == "true"
-
-
-# =========================================================
-# EXTRACT PLAYER DATA
-# =========================================================
-
-def extract_player_data(html):
-
-    stream_url = extract_js_string(
-        html, "STREAM_URL"
-    )
-
-    token = extract_js_string(
-        html, "hdneaToken"
-    )
-
-    fetch_error = extract_js_string(
-        html, "fetchError"
-    )
-
-    geo_blocked = extract_geo_flag(html)
-
-    if stream_url:
-        stream_url = stream_url.replace("\\/", "/")
-
-    if token:
-        token = token.replace("\\/", "/")
-
-    return {
-        "stream_url": stream_url or "",
-        "hdnea_token": token or "",
-        "fetch_error": fetch_error or "",
-        "geo_blocked": geo_blocked,
+    variables = {
+        "geo_flag": extract_variable(
+            html, "IS_GEO_BLOCKED"
+        ),
+        "stream_url": extract_variable(
+            html, "STREAM_URL"
+        ),
+        "hdnea_token": extract_variable(
+            html, "hdneaToken"
+        ),
+        "fetch_error": extract_variable(
+            html, "fetchError"
+        ),
     }
 
+    geo_value = variables["geo_flag"]
+
+    if geo_value:
+        geo_value = geo_value.lower()
+
+    return variables, geo_value
+
 
 # =========================================================
-# CLOUDFLARE DETECTION
+# RESPONSE DIAGNOSTICS
 # =========================================================
 
 def inspect_response(response):
@@ -239,83 +189,82 @@ def inspect_response(response):
     title = ""
 
     if title_match:
-
         title = re.sub(
             r"\s+", " ",
             title_match.group(1)
         ).strip()
 
-    indicators = [
+    cloudflare_indicators = [
         "you have been blocked",
         "sorry, you have been blocked",
         "attention required",
-        "why have i been blocked",
         "cf-chl-",
         "just a moment",
     ]
 
-    blocked = any(
-        item in lower for item in indicators
+    cloudflare_blocked = any(
+        item in lower
+        for item in cloudflare_indicators
     )
 
+    variables, geo_value = inspect_player(html)
+
+    if cloudflare_blocked:
+        status = "CLOUDFLARE_BLOCKED"
+
+    elif geo_value == "true":
+        status = "GEO_BLOCKED"
+
+    elif geo_value == "false":
+
+        if variables["stream_url"] == "PRESENT":
+            status = "STREAM_AVAILABLE"
+        elif variables["fetch_error"] not in (None, '""', "''"):
+            status = "PLAYER_ERROR"
+        else:
+            status = "STREAM_NOT_FOUND"
+
+    elif response.status_code != 200:
+        status = "HTTP_ERROR"
+
+    elif not html:
+        status = "EMPTY_RESPONSE"
+
+    else:
+        status = "INVALID_RESPONSE"
+
     return {
-        "blocked": blocked,
+        "status": status,
         "title": title,
-        "ray_id": response.headers.get("CF-RAY", ""),
-        "content_type": response.headers.get("Content-Type", ""),
+        "geo_flag": geo_value,
+        "stream_url_found": (
+            variables["stream_url"] == "PRESENT"
+        ),
+        "token_found": (
+            variables["hdnea_token"] == "PRESENT"
+        ),
+        "fetch_error": variables["fetch_error"],
         "response_length": len(html),
+        "content_type": response.headers.get(
+            "Content-Type", ""
+        ),
+        "ray_id": response.headers.get(
+            "CF-RAY", ""
+        ),
     }
 
 
 # =========================================================
-# BUILD FINAL STREAM URL
-# =========================================================
-
-def build_final_url(stream_url, token):
-
-    if not stream_url:
-        return None
-
-    if not stream_url.startswith(
-        ("https://", "http://")
-    ):
-        return None
-
-    # Already contains HDNEA token.
-
-    if "__hdnea__=" in stream_url:
-        return stream_url
-
-    # Separate token is required otherwise.
-
-    if not token:
-        return None
-
-    if not token.startswith("__hdnea__="):
-
-        token = "__hdnea__=" + token.lstrip("?&")
-
-    separator = (
-        "&" if "?" in stream_url else "?"
-    )
-
-    return stream_url + separator + token
-
-
-# =========================================================
-# LOAD SOURCE JSON
+# LOAD CHANNELS
 # =========================================================
 
 def load_channels():
 
-    print("Downloading source channel JSON...")
+    print("Downloading source JSON...")
 
     response = requests.get(
         SOURCE_URL,
-        headers={
-            "User-Agent": HEADERS["User-Agent"],
-            "Accept": "application/json",
-        },
+        headers=HEADERS,
         timeout=TIMEOUT
     )
 
@@ -324,7 +273,6 @@ def load_channels():
     data = response.json()
 
     if isinstance(data, list):
-
         channels = data
 
     elif isinstance(data, dict):
@@ -332,10 +280,7 @@ def load_channels():
         channels = None
 
         for key in (
-            "channels",
-            "data",
-            "items",
-            "list"
+            "channels", "data", "items", "list"
         ):
 
             if isinstance(data.get(key), list):
@@ -344,16 +289,15 @@ def load_channels():
 
         if channels is None:
             raise ValueError(
-                "Channel array not found in source JSON"
+                "Channel array not found"
             )
 
     else:
-
         raise ValueError(
-            "Unexpected source JSON structure"
+            "Unexpected JSON structure"
         )
 
-    valid_channels = []
+    result = []
 
     for item in channels:
 
@@ -367,18 +311,16 @@ def load_channels():
         if not channel_id:
             continue
 
-        channel_name = str(
-            item.get("name", channel_id)
-        ).strip()
-
-        valid_channels.append({
+        result.append({
             "id": channel_id,
-            "name": channel_name,
+            "name": str(
+                item.get("name", channel_id)
+            ).strip()
         })
 
-    print("Total channels:", len(valid_channels))
+    print("Total channels:", len(result))
 
-    return valid_channels
+    return result
 
 
 # =========================================================
@@ -394,202 +336,79 @@ def fetch_channel(index, channel):
 
         session = get_session()
 
-        proxy_url, proxy_params = build_api_request(
+        proxy_url, params = build_api_request(
             channel_id
         )
 
         response = session.get(
             proxy_url,
-            params=proxy_params,
+            params=params,
             headers=HEADERS,
             timeout=TIMEOUT,
             allow_redirects=True,
         )
 
-        http_code = response.status_code
-        html = response.text or ""
-
         diagnostics = inspect_response(response)
 
-        # Cloudflare challenge.
+        record = {
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "status": diagnostics["status"],
+            "http_code": response.status_code,
+            "geo_flag": diagnostics["geo_flag"],
+            "stream_url_found": diagnostics["stream_url_found"],
+            "token_found": diagnostics["token_found"],
+            "fetch_error": diagnostics["fetch_error"],
+            "page_title": diagnostics["title"],
+            "response_length": diagnostics["response_length"],
+            "content_type": diagnostics["content_type"],
+            "cloudflare_ray_id": diagnostics["ray_id"],
+        }
 
-        if diagnostics["blocked"]:
+        if index < 3 or channel_id == TEST_CHANNEL_ID:
 
-            error = "Cloudflare blocked the request"
-
-            if diagnostics["ray_id"]:
-                error += (
-                    " (Ray ID: "
-                    + diagnostics["ray_id"]
-                    + ")"
-                )
-
-            return index, False, {
-                "channel_id": channel_id,
-                "channel_name": channel_name,
-                "status": "failed",
-                "http_code": http_code,
-                "error": error,
-                "final_url": None,
-            }
-
-        response.raise_for_status()
-
-        # Extract JavaScript values.
-
-        player = extract_player_data(html)
-
-        # Explicit geo restriction.
-
-        if player["geo_blocked"] is True:
-
-            return index, False, {
-                "channel_id": channel_id,
-                "channel_name": channel_name,
-                "status": "failed",
-                "http_code": http_code,
-                "error": "IS_GEO_BLOCKED is true",
-                "final_url": None,
-            }
-
-        # Build stream URL.
-
-        final_url = build_final_url(
-            player["stream_url"],
-            player["hdnea_token"]
-        )
-
-        if final_url:
-
-            return index, True, {
-                "channel_id": channel_id,
-                "channel_name": channel_name,
-                "status": "success",
-                "http_code": http_code,
-                "final_url": final_url,
-            }
-
-        # Classify errors.
-
-        if player["fetch_error"]:
-
-            error = player["fetch_error"]
-
-        elif not player["stream_url"]:
-
-            error = "STREAM_URL not found"
-
-        elif (
-            not player["hdnea_token"]
-            and "__hdnea__=" not in player["stream_url"]
-        ):
-
-            error = "HDNEA token not found"
-
-        else:
-
-            error = "Invalid stream URL"
-
-        # Diagnostics for first three channels.
-
-        if index < 3:
-
-            print(
-                "\n========== DIAGNOSTICS =========="
-            )
-
+            print("\n========== CHANNEL DIAGNOSTICS ==========")
             print("Channel:", channel_name)
             print("ID:", channel_id)
-            print("HTTP status:", http_code)
-            print("Response URL:", response.url)
+            print("HTTP:", response.status_code)
+            print("Status:", diagnostics["status"])
+            print("Geo flag:", diagnostics["geo_flag"])
+            print("Stream available:", diagnostics["stream_url_found"])
+            print("Token present:", diagnostics["token_found"])
+            print("Player error:", diagnostics["fetch_error"])
             print("Page title:", diagnostics["title"])
-            print(
-                "Content-Type:",
-                diagnostics["content_type"]
-            )
-            print(
-                "Response length:",
-                diagnostics["response_length"]
-            )
-            print(
-                "Cloudflare Ray ID:",
-                diagnostics["ray_id"]
-            )
-            print(
-                "Geo flag:",
-                player["geo_blocked"]
-            )
-            print(
-                "STREAM_URL found:",
-                bool(player["stream_url"])
-            )
-            print(
-                "HDNEA token found:",
-                bool(player["hdnea_token"])
-            )
-            print(
-                "fetchError:",
-                player["fetch_error"]
-            )
+            print("Response length:", diagnostics["response_length"])
+            print("Content-Type:", diagnostics["content_type"])
+            print("=========================================\n")
 
-            print(
-                "================================\n"
-            )
-
-        return index, False, {
-            "channel_id": channel_id,
-            "channel_name": channel_name,
-            "status": "failed",
-            "http_code": http_code,
-            "error": error,
-            "final_url": player["stream_url"] or None,
-        }
-
-    except requests.HTTPError as exc:
-
-        status = (
-            exc.response.status_code
-            if exc.response is not None
-            else None
-        )
-
-        return index, False, {
-            "channel_id": channel_id,
-            "channel_name": channel_name,
-            "status": "failed",
-            "http_code": status,
-            "error": str(exc),
-            "final_url": None,
-        }
+        return index, record
 
     except requests.RequestException as exc:
 
-        return index, False, {
+        return index, {
             "channel_id": channel_id,
             "channel_name": channel_name,
-            "status": "failed",
+            "status": "REQUEST_ERROR",
             "http_code": None,
             "error": str(exc),
-            "final_url": None,
         }
 
     except Exception as exc:
 
-        return index, False, {
+        return index, {
             "channel_id": channel_id,
             "channel_name": channel_name,
-            "status": "failed",
+            "status": "UNKNOWN_ERROR",
             "http_code": None,
             "error": str(exc),
-            "final_url": None,
         }
 
 
 # =========================================================
-# SAVE JSON ATOMICALLY
+# SAVE OUTPUT
 # =========================================================
 
-def save_json(output):
+def save_output(output):
 
     temp_file = OUTPUT_FILE.with_suffix(".tmp")
 
@@ -615,7 +434,7 @@ def save_json(output):
 
 def main():
 
-    start_time = time.time()
+    start = time.time()
 
     channels = load_channels()
 
@@ -623,11 +442,10 @@ def main():
 
     results = []
 
-    print("\nStarting channel extraction...")
+    print("\nStarting diagnostics...")
     print("Proxy:", PROXY_BASE)
-    print("Target API:", TARGET_API)
+    print("Target:", TARGET_API)
     print("Workers:", MAX_WORKERS)
-    print("Total channels:", total)
 
     with ThreadPoolExecutor(
         max_workers=MAX_WORKERS
@@ -646,11 +464,9 @@ def main():
 
         for future in as_completed(futures):
 
-            index, success, record = future.result()
+            index, record = future.result()
 
-            results.append(
-                (index, success, record)
-            )
+            results.append((index, record))
 
             completed += 1
 
@@ -660,43 +476,43 @@ def main():
                 f"{record['status']}"
             )
 
-    # Preserve original source order.
+    results.sort(key=lambda item: item[0])
 
-    results.sort(
-        key=lambda item: item[0]
-    )
+    records = [
+        record for _, record in results
+    ]
 
-    successful_results = []
-    failed_results = []
+    summary = {}
 
-    for _, success, record in results:
+    for record in records:
 
-        if success:
-            successful_results.append(record)
-        else:
-            failed_results.append(record)
+        status = record["status"]
+
+        summary[status] = (
+            summary.get(status, 0) + 1
+        )
 
     output = {
         "source_url": SOURCE_URL,
         "total_channels": total,
-        "successful_channels": len(successful_results),
-        "failed_channels": len(failed_results),
         "timestamp": datetime.now(
             timezone.utc
         ).strftime("%Y-%m-%d %H:%M:%S"),
-        "successful_results": successful_results,
-        "failed_results": failed_results,
+        "summary": summary,
+        "results": records,
     }
 
-    save_json(output)
+    save_output(output)
 
-    elapsed = time.time() - start_time
+    elapsed = time.time() - start
 
     print("\n========== FINAL SUMMARY ==========")
     print("Total channels:", total)
-    print("Successful:", len(successful_results))
-    print("Failed:", len(failed_results))
-    print("Time taken:", round(elapsed, 2), "seconds")
+
+    for status, count in sorted(summary.items()):
+        print(status + ":", count)
+
+    print("Time:", round(elapsed, 2), "seconds")
     print("Output:", OUTPUT_FILE)
     print("===================================")
 
