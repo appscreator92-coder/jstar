@@ -1,10 +1,12 @@
 
+import ast
 import json
 import re
 import time
 import threading
+
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -17,15 +19,14 @@ from urllib3.util.retry import Retry
 # =====================================================
 
 SOURCE_URL = (
-    "https://raw.githubusercontent.com/"
-    "appscreator92-coder/index/refs/heads/main/jnew7.json"
+    "https://sportlink-tv10.pages.dev/jtvplus3.json"
 )
 
-PROXY_BASE = (
+PROXY_URL = (
     "https://master-proxy.wispy-boat-fc77.workers.dev/"
 )
 
-TARGET_API = (
+API_URL = (
     "https://b4uplay.com/api/vizha/play.php"
 )
 
@@ -46,15 +47,19 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/158.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,*/*",
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml,"
+        "*/*;q=0.8"
+    ),
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://bhoomtv.me/",
     "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
 
 
 # =====================================================
-# THREAD LOCAL SESSION
+# THREAD-LOCAL SESSION
 # =====================================================
 
 thread_local = threading.local()
@@ -86,6 +91,7 @@ def get_session():
         )
 
         session.mount("https://", adapter)
+        session.mount("http://", adapter)
 
         thread_local.session = session
 
@@ -93,148 +99,12 @@ def get_session():
 
 
 # =====================================================
-# CORRECT PROXY REQUEST
-# =====================================================
-
-def request_channel(channel_id):
-
-    session = get_session()
-
-    target_url = (
-        f"{TARGET_API}?id={channel_id}"
-    )
-
-    response = session.get(
-        PROXY_BASE,
-        params={"url": target_url},
-        headers=HEADERS,
-        timeout=TIMEOUT,
-        allow_redirects=True,
-    )
-
-    return response
-
-
-# =====================================================
-# EXTRACT VARIABLE STATUS
-# =====================================================
-
-def extract_variable(html, name):
-
-    pattern = re.compile(
-        r"\b(?:const|let|var)\s+"
-        + re.escape(name)
-        + r"\s*=\s*"
-        r'("(?:\\.|[^"\\])*"|'
-        r"'(?:\\.|[^'\\])*'|"
-        r"true|false|null)",
-        re.IGNORECASE | re.DOTALL
-    )
-
-    match = pattern.search(html)
-
-    if not match:
-        return None
-
-    return match.group(1)
-
-
-def inspect_player(html):
-
-    geo = extract_variable(
-        html, "IS_GEO_BLOCKED"
-    )
-
-    stream = extract_variable(
-        html, "STREAM_URL"
-    )
-
-    token = extract_variable(
-        html, "hdneaToken"
-    )
-
-    error = extract_variable(
-        html, "fetchError"
-    )
-
-    geo_value = (
-        geo.lower() if geo else None
-    )
-
-    return {
-        "geo_blocked": geo_value,
-        "stream_found": bool(stream),
-        "token_found": bool(token),
-        "fetch_error_present": bool(
-            error and error not in ('""', "''")
-        ),
-    }
-
-
-# =====================================================
-# RESPONSE CLASSIFICATION
-# =====================================================
-
-def classify_response(response):
-
-    html = response.text or ""
-
-    lower = html.lower()
-
-    if any(x in lower for x in [
-        "you have been blocked",
-        "attention required",
-        "cf-chl-",
-        "just a moment",
-    ]):
-        return {
-            "status": "CLOUDFLARE_BLOCKED",
-            "http_code": response.status_code,
-        }
-
-    if response.status_code != 200:
-        return {
-            "status": "HTTP_ERROR",
-            "http_code": response.status_code,
-        }
-
-    player = inspect_player(html)
-
-    geo = player["geo_blocked"]
-
-    if geo == "true":
-        status = "GEO_BLOCKED"
-
-    elif geo == "false":
-
-        if player["stream_found"]:
-            status = "STREAM_AVAILABLE"
-        elif player["fetch_error_present"]:
-            status = "PLAYER_ERROR"
-        else:
-            status = "STREAM_NOT_FOUND"
-
-    else:
-        status = "INVALID_RESPONSE"
-
-    return {
-        "status": status,
-        "http_code": response.status_code,
-        "geo_flag": geo,
-        "stream_url_found": player["stream_found"],
-        "token_present": player["token_found"],
-        "fetch_error_present": player["fetch_error_present"],
-        "response_length": len(html),
-    }
-
-
-# =====================================================
-# LOAD CHANNELS
+# LOAD SOURCE CHANNELS
 # =====================================================
 
 def load_channels():
 
-    print("Downloading source JSON...")
+    print("Downloading channel JSON...")
 
     response = requests.get(
         SOURCE_URL,
@@ -251,29 +121,27 @@ def load_channels():
 
     elif isinstance(data, dict):
 
-        channels = next(
-            (
-                data[key]
-                for key in (
-                    "channels",
-                    "data",
-                    "items",
-                    "list"
-                )
-                if isinstance(data.get(key), list)
-            ),
-            None
-        )
+        channels = None
+
+        for key in (
+            "channels",
+            "data",
+            "items",
+            "list",
+            "results"
+        ):
+
+            if isinstance(data.get(key), list):
+                channels = data[key]
+                break
 
         if channels is None:
             raise ValueError(
-                "Channel list not found"
+                "Channel array not found in source JSON"
             )
 
     else:
-        raise ValueError(
-            "Invalid source JSON"
-        )
+        raise ValueError("Invalid source JSON")
 
     result = []
 
@@ -283,7 +151,20 @@ def load_channels():
             continue
 
         channel_id = str(
-            item.get("id", "")
+            item.get(
+                "id",
+                item.get("channel_id", "")
+            )
+        ).strip()
+
+        channel_name = str(
+            item.get(
+                "name",
+                item.get(
+                    "channel_name",
+                    channel_id
+                )
+            )
         ).strip()
 
         if not channel_id:
@@ -291,14 +172,161 @@ def load_channels():
 
         result.append({
             "id": channel_id,
-            "name": str(
-                item.get("name", channel_id)
-            ).strip()
+            "name": channel_name
         })
+
+    if not result:
+        raise ValueError(
+            "No valid channels found in source JSON"
+        )
 
     print("Total channels:", len(result))
 
     return result
+
+
+# =====================================================
+# JAVASCRIPT VARIABLE EXTRACTION
+# =====================================================
+
+JS_STRING = (
+    r'("(?:\\.|[^"\\])*"|'
+    r"'(?:\\.|[^'\\])*')"
+)
+
+
+def extract_js_string(html, variable):
+
+    pattern = re.compile(
+        r"\b(?:const|let|var)\s+"
+        + re.escape(variable)
+        + r"\s*=\s*"
+        + JS_STRING,
+        re.IGNORECASE | re.DOTALL
+    )
+
+    match = pattern.search(html)
+
+    if not match:
+        return ""
+
+    try:
+
+        value = ast.literal_eval(
+            match.group(1)
+        )
+
+        if isinstance(value, str):
+            return value.strip()
+
+    except (ValueError, SyntaxError):
+        pass
+
+    return ""
+
+
+def extract_geo_flag(html):
+
+    pattern = re.compile(
+        r"\b(?:const|let|var)\s+"
+        r"IS_GEO_BLOCKED\s*=\s*"
+        r"(true|false)\b",
+        re.IGNORECASE
+    )
+
+    match = pattern.search(html)
+
+    if not match:
+        return None
+
+    return match.group(1).lower() == "true"
+
+
+def extract_player_data(html):
+
+    stream_url = extract_js_string(
+        html, "STREAM_URL"
+    )
+
+    token = extract_js_string(
+        html, "hdneaToken"
+    )
+
+    fetch_error = extract_js_string(
+        html, "fetchError"
+    )
+
+    geo_blocked = extract_geo_flag(html)
+
+    stream_url = stream_url.replace("\\/", "/")
+    token = token.replace("\\/", "/")
+
+    return {
+        "stream_url": stream_url,
+        "hdnea_token": token,
+        "fetch_error": fetch_error,
+        "geo_blocked": geo_blocked
+    }
+
+
+# =====================================================
+# BUILD FINAL URL
+# =====================================================
+
+def build_final_url(stream_url, token):
+
+    if not stream_url:
+        return None
+
+    if not stream_url.startswith(
+        ("https://", "http://")
+    ):
+        return None
+
+    # The stream URL may already contain the token.
+
+    if "__hdnea__=" in stream_url:
+        return stream_url
+
+    if not token:
+        return stream_url
+
+    if not token.startswith("__hdnea__="):
+        token = "__hdnea__=" + token
+
+    separator = (
+        "&" if "?" in stream_url else "?"
+    )
+
+    return stream_url + separator + token
+
+
+# =====================================================
+# REQUEST PLAYER THROUGH PROXY
+# =====================================================
+
+def request_player(channel_id):
+
+    session = get_session()
+
+    target_url = (
+        f"{API_URL}?id={channel_id}"
+    )
+
+    # Important: encode the complete target URL
+    # as the Worker's "url" parameter.
+
+    response = session.get(
+        PROXY_URL,
+        params={
+            "url": target_url
+        },
+        headers=HEADERS,
+        timeout=TIMEOUT,
+        allow_redirects=True
+    )
+
+    return response
 
 
 # =====================================================
@@ -310,37 +338,108 @@ def fetch_channel(index, channel):
     channel_id = channel["id"]
     channel_name = channel["name"]
 
+    base_record = {
+        "channel_id": channel_id,
+        "channel_name": channel_name,
+        "status": "failed",
+        "http_code": None,
+        "final_url": None
+    }
+
     try:
 
-        response = request_channel(channel_id)
+        response = request_player(channel_id)
 
-        result = classify_response(response)
+        base_record["http_code"] = (
+            response.status_code
+        )
 
-        record = {
+        response.raise_for_status()
+
+        html = response.text or ""
+
+        if not html:
+            raise ValueError("Empty player response")
+
+        player = extract_player_data(html)
+
+        # Do not mark geo-restricted responses
+        # as successful.
+
+        if player["geo_blocked"] is True:
+
+            base_record["error"] = (
+                "IS_GEO_BLOCKED is true"
+            )
+
+            return index, False, base_record
+
+        if player["geo_blocked"] is None:
+
+            base_record["error"] = (
+                "IS_GEO_BLOCKED variable not found"
+            )
+
+            return index, False, base_record
+
+        if player["fetch_error"]:
+
+            base_record["error"] = (
+                player["fetch_error"]
+            )
+
+            return index, False, base_record
+
+        if not player["stream_url"]:
+
+            base_record["error"] = (
+                "STREAM_URL not found"
+            )
+
+            return index, False, base_record
+
+        final_url = build_final_url(
+            player["stream_url"],
+            player["hdnea_token"]
+        )
+
+        if not final_url:
+
+            base_record["error"] = (
+                "Invalid stream URL"
+            )
+
+            return index, False, base_record
+
+        # Successful response.
+
+        success_record = {
             "channel_id": channel_id,
             "channel_name": channel_name,
-            **result
+            "status": "success",
+            "http_code": response.status_code,
+            "final_url": final_url
         }
 
-        return index, record
+        return index, True, success_record
+
+    except requests.HTTPError as exc:
+
+        base_record["error"] = str(exc)
+
+        return index, False, base_record
 
     except requests.RequestException as exc:
 
-        return index, {
-            "channel_id": channel_id,
-            "channel_name": channel_name,
-            "status": "REQUEST_ERROR",
-            "error": str(exc),
-        }
+        base_record["error"] = str(exc)
+
+        return index, False, base_record
 
     except Exception as exc:
 
-        return index, {
-            "channel_id": channel_id,
-            "channel_name": channel_name,
-            "status": "UNKNOWN_ERROR",
-            "error": str(exc),
-        }
+        base_record["error"] = str(exc)
+
+        return index, False, base_record
 
 
 # =====================================================
@@ -349,17 +448,19 @@ def fetch_channel(index, channel):
 
 def main():
 
-    start = time.time()
+    start_time = time.time()
 
     channels = load_channels()
 
-    results = []
-
     total = len(channels)
 
-    print("\nStarting extraction diagnostics...")
-    print("Proxy:", PROXY_BASE)
+    results = []
+
+    print("\nStarting channel processing...")
+    print("Proxy:", PROXY_URL)
+    print("API:", API_URL)
     print("Workers:", MAX_WORKERS)
+    print("Total:", total)
 
     with ThreadPoolExecutor(
         max_workers=MAX_WORKERS
@@ -368,19 +469,23 @@ def main():
         futures = [
             executor.submit(
                 fetch_channel,
-                i,
+                index,
                 channel
             )
-            for i, channel in enumerate(channels)
+            for index, channel in enumerate(channels)
         ]
 
-        for completed, future in enumerate(
-            as_completed(futures), 1
-        ):
+        completed = 0
 
-            index, record = future.result()
+        for future in as_completed(futures):
 
-            results.append((index, record))
+            index, success, record = future.result()
+
+            results.append(
+                (index, success, record)
+            )
+
+            completed += 1
 
             print(
                 f"[{completed}/{total}] "
@@ -388,63 +493,78 @@ def main():
                 f"{record['status']}"
             )
 
-    results.sort(key=lambda x: x[0])
+    # Preserve original channel order.
 
-    records = [
-        record for _, record in results
-    ]
+    results.sort(
+        key=lambda item: item[0]
+    )
 
-    summary = {}
+    successful_results = []
+    failed_results = []
 
-    for record in records:
+    for _, success, record in results:
 
-        status = record["status"]
+        if success:
+            successful_results.append(record)
+        else:
+            failed_results.append(record)
 
-        summary[status] = (
-            summary.get(status, 0) + 1
-        )
+    # Original requested JSON structure.
 
     output = {
         "source_url": SOURCE_URL,
         "total_channels": total,
-        "timestamp": datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%d %H:%M:%S"),
-        "summary": summary,
-        "results": records,
+        "successful_channels": len(
+            successful_results
+        ),
+        "failed_channels": len(
+            failed_results
+        ),
+        "timestamp": datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "successful_results": successful_results,
+        "failed_results": failed_results
     }
 
-    temp = OUTPUT_FILE.with_suffix(".tmp")
+    # Atomic JSON writing.
+
+    temp_file = OUTPUT_FILE.with_suffix(".tmp")
 
     with open(
-        temp,
+        temp_file,
         "w",
         encoding="utf-8"
-    ) as f:
+    ) as file:
 
         json.dump(
             output,
-            f,
+            file,
             indent=4,
             ensure_ascii=False
         )
 
-    temp.replace(OUTPUT_FILE)
+    temp_file.replace(OUTPUT_FILE)
 
-    print("\n========== SUMMARY ==========")
-    print("Total:", total)
+    elapsed = time.time() - start_time
 
-    for status, count in sorted(summary.items()):
-        print(f"{status}: {count}")
-
+    print("\n========== FINAL SUMMARY ==========")
+    print("Total channels:", total)
     print(
-        "Time:",
-        round(time.time() - start, 2),
+        "Successful:",
+        len(successful_results)
+    )
+    print(
+        "Failed:",
+        len(failed_results)
+    )
+    print(
+        "Time taken:",
+        round(elapsed, 2),
         "seconds"
     )
-
     print("Output:", OUTPUT_FILE)
-    print("=============================")
+    print("===================================")
 
 
 if __name__ == "__main__":
